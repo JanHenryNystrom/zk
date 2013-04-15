@@ -28,7 +28,7 @@
 %% Nonterminals.
 %% ===================================================================
 Nonterminals
-recfile include includes modules module record records path
+file include includes modules module record records path
 dot_name name fields field type ptype ctype
 .
 
@@ -53,56 +53,58 @@ Expect 0.
 %% ===================================================================
 %% Rootsymbol.
 %% ===================================================================
-Rootsymbol recfile.
+Rootsymbol file.
 
 %% ===================================================================
 %% Rules.
 %% ===================================================================
 
-recfile -> includes modules : [].
+file -> includes modules : #file{includes = '$1', modules = '$2'}.
 
-includes -> '$empty'.
-includes -> include includes.
+includes -> '$empty'         : [].
+includes -> include includes : ['$1' | '$2'].
 
-include -> t_include path.
+include -> t_include path    : value($2).
 
-path -> t_string.
+path -> t_string : '$1'.
 
-modules -> '$empty'.
-modules -> module modules.
+modules -> '$empty'       : [].
+modules -> module modules : ['$1' | '$2'].
 
-module -> t_module dot_name  '{' record records '}'.
+module -> t_module dot_name '{' record records '}' :
+          #module{name = '$2', records = ['$4' | '$5']}.
 
-dot_name -> name.
-dot_name -> name t_dot dot_name.
+dot_name -> name                : ['$1'].
+dot_name -> name t_dot dot_name : ['$1' | '$3'].
 
-records -> '$empty'.
-records -> record records.
+records -> '$empty'       : [].
+records -> record records : ['$1' | '$2'].
 
-record -> t_class name '{' field fields '}'.
+record -> t_class name '{' field fields '}' :
+          #record{name = '$2', fields = ['$4' | '$5']}.
 
-fields -> '$empty'.
-fields -> field fields.
+fields -> '$empty'     : [].
+fields -> field fields : ['$1' | '$2'].
 
-field -> type name ';'.
+field -> type name ';' : #field{name = '$2', type = '$1'}.
 
-name ->  t_name.
+name ->  t_name : '$1'.
 
-type -> ptype.
-type -> ctype.
+type -> ptype : '$1'.
+type -> ctype : '$1'.
 
-ptype -> t_byte.
-ptype -> t_boolean.
-ptype -> t_int.
-ptype -> t_long.
-ptype -> t_float.
-ptype -> t_double.
-ptype -> t_ustring.
-ptype -> t_buffer.
+ptype -> t_byte    : '$1'.
+ptype -> t_boolean : '$1'.
+ptype -> t_int     : '$1'.
+ptype -> t_long    : '$1'.
+ptype -> t_float   : '$1'.
+ptype -> t_double  : '$1'.
+ptype -> t_ustring : '$1'.
+ptype -> t_buffer  : '$1'.
 
-ctype -> t_vector '<' type '>'.
-ctype -> t_map '<' type ',' type '>'.
-ctype -> dot_name.
+ctype -> t_vector '<' type '>'       : #vector{type = '$3'}.
+ctype -> t_map '<' type ',' type '>' : #map{key = '$3', value = '$5'}.
+ctype -> dot_name : '$1'.
 
 
 %% ===================================================================
@@ -111,7 +113,7 @@ ctype -> dot_name.
 Erlang code.
 
 %% Includes
-%-include_lib("protobuf/include/zk_hadoop_record.hrl").
+-include_lib("zk/src/zk_hadoop_record.hrl").
 
 %% API
 -export([file/1]).
@@ -135,3 +137,5 @@ file(File) ->
 %%====================================================================
 %% Internal functions
 %%====================================================================
+
+value({_, _, Value}) -> Value.

@@ -27,6 +27,7 @@
 
 %% Includes
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("zk/src/zk_hadoop_record.hrl").
 
 %% ===================================================================
 %% Tests.
@@ -36,7 +37,7 @@
 % Distro
 %%%-------------------------------------------------------------------
 parse_distro_test_() ->
-    [?_test(?assertEqual(true, is_list(zk_hadoop_record_parse:file(File)))) ||
+    [?_test(?assertMatch(#file{}, zk_hadoop_record_parse:file(File))) ||
         File <- files(distro)].
 
 
