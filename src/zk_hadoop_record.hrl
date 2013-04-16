@@ -15,29 +15,33 @@
 %% limitations under the License.
 %%==============================================================================
 
--record(file, {includes = [],
-               modules = []
+-record(name, {type = simple :: simple | scoped,
+               value,
+               line
               }).
-
--record(include, {path = "", line}).
-
--record(module, {name = "",
-                 records = [],
-                 line}).
-
--record(record, {name,
-                 fields,
-                 line}).
-
--record(field, {type,
-                name,
-                line}).
 
 -record(vector, {type, line}).
 
 -record(map, {key, value, line}).
 
--record(name, {type = simple :: simple | scoped,
-               value,
-               line
+-record(field, {type,
+                name,
+                line}).
+
+-record(record, {name,
+                 fields = [] :: [#field{}],
+                 line,
+                 id = make_ref() :: reference()
+                }).
+
+-record(module, {name = "",
+                 records = [] :: [#record{}],
+                 line,
+                 id = make_ref() :: reference()
+                }).
+
+-record(include, {path = "", line}).
+
+-record(file, {includes = [] :: [#include{}],
+               modules = [] :: [#module{}]
               }).
