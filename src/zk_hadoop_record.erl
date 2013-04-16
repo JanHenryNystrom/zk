@@ -35,13 +35,37 @@
 -record(opts, {dest_name :: string(),
                include_paths = [] :: [string()],
                src_dir = "." :: string(),
-               dest_dir = "." :: string()}).
+               dest_dir = "." :: string()
+              }).
 
 -record(attr, {type ::atom(),
-               new_name :: string()
+               new_name :: string(),
+               id :: reference()
               }).
 
 %% Defines
+
+-define(COPYRIGHT_PREAMBLE,
+        "%%==================================================================\n"
+        "%% Copyright 2013 Jan Henry Nystrom <JanHenryNystrom@gmail.com>\n"
+        "%%\n"
+        "%% Licensed under the Apache License, Version 2.0 (the \"License\");\n"
+        "%% you may not use this file except in compliance with the License.\n"
+        "%% You may obtain a copy of the License at\n"
+        "%%\n"
+        "%% http://www.apache.org/licenses/LICENSE-2.0\n"
+        "%%\n"
+        "%% Unless required by applicable law or agreed to in writing,"
+        " software\n"
+        "%% distributed under the License is distributed on an \"AS IS\""
+        " BASIS,\n"
+        "%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or"
+        " implied.\n"
+        "%% See the License for the specific language governing permissions"
+        " and\n"
+        "%% limitations under the License.\n"
+        "%%==================================================================\n"
+       ).
 
 
 %% Types
@@ -71,7 +95,15 @@ compile(File) -> compile(File, []).
 -spec compile(atom() | string(), [opt()]) -> ok | error.
 %%--------------------------------------------------------------------
 compile(Atom, Opts) when is_atom(Atom) -> compile(atom_to_list(Atom), Opts);
-compile(File, Opts) -> do_compile(File, parse_opts(Opts, #opts{})).
+compile(File, Opts) ->
+    OptsRec =
+        case parse_opts(Opts, #opts{}) of
+            OptsRec0 = #opts{dest_name = undefined} ->
+                OptsRec0#opts{dest_name = filename:basename(File)};
+            OptsRec0 ->
+                OptsRec0
+        end,
+    do_compile(File, OptsRec).
 
 %% ===================================================================
 %% Internal functions.
@@ -82,11 +114,52 @@ do_compile(File, Opts) ->
           [fun read_file/2,
            fun scan/2,
            fun parse/2,
-           fun analyse/2]).
+           fun analyse/2,
+           fun rename/2,
+           fun gen/2
+          ]).
 
 chain(Result, _, []) -> Result;
 chain({ok, Previous}, Opts, [Fun | T]) -> chain(Fun(Previous, Opts), Opts, T);
-chain(Error, _, _) -> Error.
+chain(Error, _, _) -> {error, Error}.
+
+gen(File, Opts = #opts{dest_name = Name}) when is_atom(Name) ->
+    gen(File, Opts#opts{dest_name = atom_to_list(Name)});
+gen(#file{modules = Modules}, #opts{dest_name = Name, dest_dir = Dir}) ->
+    HrlFile = filename:join(Dir, Name ++ ".hrl"),
+    {ok, HrlStream} = file:open(HrlFile, [write]),
+    gen(hrl, [preamble | Modules], HrlStream),
+    ok.
+
+gen(_, [], Stream) -> file:close(Stream);
+gen(Type, [preamble | Modules], Stream) ->
+    io:format(Stream, "~s~n~n", [?COPYRIGHT_PREAMBLE]),
+    gen(Type, Modules, Stream);
+gen(Type, [H | T], Stream) ->
+    gen_module(Type, H, Stream),
+    gen(Type, T, Stream).
+
+gen_module(Type, #module{name = Name, records = Records}, Stream) ->
+    io:format(Stream, "%%~40c~n%% Module ~s~n%%~40c~n", [$-, Name, $-]),
+    [gen_record(Type, Record, Stream) || Record <- Records],
+    io:format(Stream, "%%~40c~n%% Module ~s~n%%~40c~n~n", [$-, Name, $-]).
+
+gen_record(hrl, #record{name = Name, fields = Fields}, Stream) ->
+    io:format(Stream, "-record(~s,~n~8c{~n", [Name, $ ]),
+    [gen_field(hrl, Field, Stream) || Field <- Fields],
+    io:format(Stream, "~8c}).~n", [$ ]).
+
+gen_field(hrl, #field{name = Name, type = Type}, Stream) ->
+    io:format(Stream, "~10c~s :: ", [$ , join([Name], [])]),
+    gen_type(hrl, Type, Stream),
+    io:format(Stream, ",~n", []).
+
+gen_type(hrl, #vector{type = Type}, Stream) ->
+    io:format(Stream, "[", []),
+    gen_type(hrl, Type, Stream),
+    io:format(Stream, "]", []);
+gen_type(hrl, Type, Stream) ->
+    io:format(Stream, "~p()", [Type]).
 
 read_file(File, #opts{src_dir = Dir}) ->
     FileName = case filename:extension(File) of
@@ -103,16 +176,10 @@ scan(Bin, _) ->
 
 parse(Tokens, _) -> zk_hadoop_record_parse:parse(Tokens).
 
-analyse(Tree, Opts) -> analyse(Tree, dict:new(), Opts).
+analyse(File = #file{includes = [], modules = Modules, names = Names}, _) ->
+    {ok, File#file{names = lists:foldl(fun analyse_module/2, Names, Modules)}}.
 
-analyse(#file{includes = [], modules = Modules}, Names, _) ->
-    Names1 = lists:foldl(fun analyse_module/2, Names, Modules),
-    [rename(Module, shrink(longest_prefix(Names1), Names1)) ||
-        Module <- Modules].
-
-rename(Module, _) -> Module.
-
-analyse_module(#module{name = Name, records = Recs}, Names) ->
+analyse_module(#module{name = Name, records = Recs, id = Id}, Names) ->
     Value = value(Name),
     case dict:is_key(Value, Names) of
         true ->
@@ -121,21 +188,55 @@ analyse_module(#module{name = Name, records = Recs}, Names) ->
             Names0 = dict:store(module,
                                 Name,
                                 dict:store(Value,
-                                           #attr{type = module},
+                                           #attr{type = module, id = Id},
                                            Names)),
             Names1 = lists:foldl(fun analyse_record/2, Names0, Recs),
             dict:erase(module, Names1)
     end.
 
-analyse_record(#record{name = Name, line = Line}, Names) ->
+analyse_record(#record{name = Name, line = Line, id = Id}, Names) ->
     Module = dict:fetch(module, Names),
     FullName = fullname(Module, Name),
     case dict:is_key(FullName, Names) of
         true ->
             exit({duplicate_name, Name, Line});
         false ->
-            dict:store(FullName, #attr{type = record}, Names)
+            dict:store(FullName, #attr{type = record, id = Id}, Names)
     end.
+
+rename(File = #file{includes = [], modules = Modules, names = Names}, _) ->
+    Shrunk = shrink(longest_prefix(Names), Names),
+    IdList = [{Id, N} ||
+                 {_, #attr{id = Id, new_name = N}} <- dict:to_list(Shrunk)],
+    Modules1 = [rename(Module, Shrunk, IdList) || Module <- Modules],
+    {ok, File#file{modules = Modules1}}.
+
+rename(Module = #module{id = Id, records = Recs}, Names, IdList) ->
+    {_, NewName} = lists:keyfind(Id, 1, IdList),
+    Recs1 = [rename(Rec, Names, IdList) || Rec <- Recs],
+    Module#module{name = NewName, records = Recs1};
+rename(Rec = #record{id = Id, fields = Fields}, Names, IdList) ->
+    {_, NewName} = lists:keyfind(Id, 1, IdList),
+    Fields1 = [rename(Field, Names, IdList) || Field <- Fields],
+    Rec#record{name = NewName, fields = Fields1};
+rename(Field = #field{name = Name, type = Type}, Names, IdList) ->
+    NewType = rename(Type, Names, IdList),
+    Field#field{name = value(Name), type = NewType};
+rename(Vector = #vector{type = Type}, Names, IdList) ->
+    NewType = rename(Type, Names, IdList),
+    Vector#vector{type = NewType};
+rename(Map = #map{key = Key, value = Value}, Names, IdList) ->
+    NewKey = rename(Key, Names, IdList),
+    NewValue = rename(Value, Names, IdList),
+    Map#map{key = NewKey, value = NewValue};
+rename(#name{type = scoped, value = [Value]}, _, _) ->
+    Value;
+rename(#name{type = scoped, value = Value}, Names, _) ->
+    (dict:fetch(Value, Names))#attr.new_name;
+rename(#name{value = [Value]}, _, _) ->
+    Value;
+rename(Element, _, _) ->
+    Element.
 
 line(#name{line = Line}) -> Line.
 
@@ -173,19 +274,52 @@ shrink(Prefix, K, V = #attr{}, Names) ->
     dict:store(K, V#attr{new_name = remove_fuse(Prefix, K)}, Names);
 shrink(_, _, _, Names) -> Names.
 
-remove_fuse([], Key) ->
-    list_to_atom(string:join([atom_to_list(K) || K <- Key], "_"));
-remove_fuse([H | T], [H | Key]) ->
-    remove_fuse(T, Key).
+remove_fuse([], Key) -> list_to_atom(join(Key, []));
+remove_fuse([H | T], [H | Key]) -> remove_fuse(T, Key).
 
+join([], Acc) -> lists:reverse(Acc);
+join([H | T], Acc) ->
+    case atom_to_list(H) of
+        [H1 | T1] when H1 >= $a, H1 =< $z -> join_l(T1, T, [H1 | Acc]);
+        [H1 | T1] when H1 >= $A, H1 =< $Z -> join_u(i, T1, T, [down(H1) | Acc]);
+        [H1 | T1] -> join_l(T1, T, [H1 | Acc])
+    end.
+
+join_l([], [], Acc) -> lists:reverse(Acc);
+join_l([], Key, Acc) -> join(Key, [$_ | Acc]);
+join_l([H | T], R, Acc) when H >= $a, H =< $z -> join_l(T, R, [H | Acc]);
+join_l([H | T], R, Acc) when H >= $A, H =< $Z ->
+    join_u(i, T, R, [down(H), $_| Acc]);
+join_l([H | T], R, Acc) ->
+    join_l(T, R, [H, $_| Acc]).
+join_u(_, [], [], Acc) -> lists:reverse(Acc);
+join_u(_, [], Key, Acc) -> join(Key, [$_ | Acc]);
+join_u(i, [H | T], R, Acc) when H >= $a, H =< $z ->
+    join_u(l, T, R, [H | Acc]);
+join_u(i, [H | T], R, Acc) when H >= $A, H =< $Z ->
+    join_u(u, T, R, [down(H) | Acc]);
+join_u(l, [H | T], R, Acc) when H >= $a, H =< $z ->
+    join_l(T, R, [H | Acc]);
+join_u(l, [H | T], R, Acc) when H >= $A, H =< $Z ->
+    join_u(i, T, R, [down(H), $_ | Acc]);
+join_u(u, [H | T], R, [H1 | Acc]) when H >= $a, H =< $z ->
+    join_l(T, R, [H, H1, $_| Acc]);
+join_u(u, [H], R, Acc) when H >= $A, H =< $Z ->
+    join(R, [down(H) | Acc]);
+join_u(u, [H | T], R, Acc) when H >= $A, H =< $Z ->
+    join_u(u, T, R, [down(H) | Acc]);
+join_u(_, [H | T], R, Acc) ->
+    join_l(T, R, [H, $_| Acc]).
+
+down(U) -> U + 32.
 
 but_last([]) -> [];
 but_last([H, _]) -> [H];
 but_last([_]) -> [];
 but_last([H | T]) -> [H | but_last(T)].
 
-format_error(Module, Message, Line) ->
-    io:format("Error Line ~p:~s~n", [Line, Module:format_error(Message)]).
+%% format_error(Module, Message, Line) ->
+%%     io:format("Error Line ~p:~s~n", [Line, Module:format_error(Message)]).
 
 parse_opts([], Rec) -> Rec;
 parse_opts(Opts, Rec) -> lists:foldl(fun parse_opt/2, Rec, Opts).

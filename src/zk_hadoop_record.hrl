@@ -15,10 +15,11 @@
 %% limitations under the License.
 %%==============================================================================
 
--record(name, {type = simple :: simple | scoped,
-               value,
-               line
-              }).
+-record(name,
+        {type = simple :: simple | scoped,
+         value,
+         line
+        }).
 
 -record(vector, {type, line}).
 
@@ -43,5 +44,6 @@
 -record(include, {path = "", line}).
 
 -record(file, {includes = [] :: [#include{}],
-               modules = [] :: [#module{}]
+               modules = [] :: [#module{}],
+               names = dict:new()
               }).
