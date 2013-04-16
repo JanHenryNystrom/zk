@@ -64,8 +64,19 @@
         "%% See the License for the specific language governing permissions"
         " and\n"
         "%% limitations under the License.\n"
-        "%%==================================================================\n"
+        "%%=================================================================="
        ).
+
+-define(TYPE_PREAMBLE,
+        "%% Types\n\n"
+        "%% Primitive\n"
+        "-type int()     :: integer() %% :32/integer-big-signed\n"
+        "-type long()    :: integer() %% :64/integer-big-signed\n"
+        "-type float()   :: float()   %% :32/float\n"
+        "-type double()  :: float()   %% :64/float\n"
+        "-type ustring() :: binary()  %% :X/bytes in unicode\n"
+        "-type buffer()  :: binary()  %% :X/bytes"
+        ).
 
 
 %% Types
@@ -125,19 +136,31 @@ chain(Error, _, _) -> {error, Error}.
 
 gen(File, Opts = #opts{dest_name = Name}) when is_atom(Name) ->
     gen(File, Opts#opts{dest_name = atom_to_list(Name)});
-gen(#file{modules = Modules}, #opts{dest_name = Name, dest_dir = Dir}) ->
+gen(#file{modules = Modules, uses = Uses},
+    #opts{dest_name = Name, dest_dir = Dir}) ->
     HrlFile = filename:join(Dir, Name ++ ".hrl"),
     {ok, HrlStream} = file:open(HrlFile, [write]),
-    gen(hrl, [preamble | Modules], HrlStream),
+    gen(hrl, [preamble, Uses | Modules], HrlStream),
     ok.
 
 gen(_, [], Stream) -> file:close(Stream);
-gen(Type, [preamble | Modules], Stream) ->
+gen(hrl, [preamble, Uses | Modules], Stream) ->
     io:format(Stream, "~s~n~n", [?COPYRIGHT_PREAMBLE]),
-    gen(Type, Modules, Stream);
+    io:format(Stream, "~s~n~n", [?TYPE_PREAMBLE]),
+    io:format(Stream, "%% Generated~n", []),
+    [gen_type(Use, Stream) || Use <- Uses],
+    io:format(Stream, "~n", []),
+    gen(hrl, Modules, Stream);
+gen(erl, [preamble, _Uses | Modules], Stream) ->
+    io:format(Stream, "~s~n~n", [?COPYRIGHT_PREAMBLE]),
+    gen(erl, Modules, Stream);
 gen(Type, [H | T], Stream) ->
     gen_module(Type, H, Stream),
     gen(Type, T, Stream).
+
+gen_type(Type, Stream) ->
+    io:format(Stream, "-type ~p() :: #~p{}.~n", [Type, Type]).
+
 
 gen_module(Type, #module{name = Name, records = Records}, Stream) ->
     io:format(Stream, "%%~40c~n%% Module ~s~n%%~40c~n", [$-, Name, $-]),
@@ -146,13 +169,20 @@ gen_module(Type, #module{name = Name, records = Records}, Stream) ->
 
 gen_record(hrl, #record{name = Name, fields = Fields}, Stream) ->
     io:format(Stream, "-record(~s,~n~8c{~n", [Name, $ ]),
-    [gen_field(hrl, Field, Stream) || Field <- Fields],
+    gen_fields(hrl, Fields, Stream),
     io:format(Stream, "~8c}).~n", [$ ]).
+
+gen_fields(Type, [H], Stream) ->
+    gen_field(Type, H, Stream),
+    io:format(Stream, "~n", []);
+gen_fields(Type, [H | T], Stream) ->
+    gen_field(Type, H, Stream),
+    io:format(Stream, ",~n", []),
+    gen_fields(Type, T, Stream).
 
 gen_field(hrl, #field{name = Name, type = Type}, Stream) ->
     io:format(Stream, "~10c~s :: ", [$ , join([Name], [])]),
-    gen_type(hrl, Type, Stream),
-    io:format(Stream, ",~n", []).
+    gen_type(hrl, Type, Stream).
 
 gen_type(hrl, #vector{type = Type}, Stream) ->
     io:format(Stream, "[", []),
@@ -208,37 +238,41 @@ rename(File = #file{includes = [], modules = Modules, names = Names}, _) ->
     Shrunk = shrink(longest_prefix(Names), Names),
     IdList = [{Id, N} ||
                  {_, #attr{id = Id, new_name = N}} <- dict:to_list(Shrunk)],
-    Modules1 = [rename(Module, Shrunk, IdList, none) || Module <- Modules],
-    {ok, File#file{modules = Modules1}}.
+    {Modules1, Uses} =
+        lists:unzip([rename(Module, Shrunk, IdList, none) ||
+                        Module <- Modules]),
+    {ok, File#file{modules = Modules1, uses=lists:usort(lists:flatten(Uses))}}.
 
 rename(Module = #module{name = Name, id=Id, records=Recs}, Names, IdList, _) ->
     {_, NewName} = lists:keyfind(Id, 1, IdList),
-    Recs1 = [rename(Rec, Names, IdList, Name) || Rec <- Recs],
-    Module#module{name = NewName, records = Recs1};
+    {Recs1, Uses} =
+        lists:unzip([rename(Rec, Names, IdList, Name) || Rec <- Recs]),
+    {Module#module{name = NewName, records = Recs1}, Uses};
 rename(Rec = #record{id = Id, fields = Fields}, Names, IdList, Module) ->
     {_, NewName} = lists:keyfind(Id, 1, IdList),
-    Fields1 = [rename(Field, Names, IdList, Module) || Field <- Fields],
-    Rec#record{name = NewName, fields = Fields1};
+    {Fields1, Uses} =
+        lists:unzip([rename(Field, Names, IdList, Module) || Field <- Fields]),
+    {Rec#record{name = NewName, fields = Fields1}, Uses};
 rename(Field = #field{name = Name, type = Type}, Names, IdList, Module) ->
-    NewType = rename(Type, Names, IdList, Module),
-    Field#field{name = value(Name), type = NewType};
+    {NewType, Uses} = rename(Type, Names, IdList, Module),
+    {Field#field{name = value(Name), type = NewType}, Uses};
 rename(Vector = #vector{type = Type}, Names, IdList, Module) ->
-    NewType = rename(Type, Names, IdList, Module),
-    Vector#vector{type = NewType};
+    {NewType, Uses} = rename(Type, Names, IdList, Module),
+    {Vector#vector{type = NewType}, Uses};
 rename(Map = #map{key = Key, value = Value}, Names, IdList, Module) ->
-    NewKey = rename(Key, Names, IdList, Module),
-    NewValue = rename(Value, Names, IdList, Module),
-    Map#map{key = NewKey, value = NewValue};
+    {NewKey, Uses1} = rename(Key, Names, IdList, Module),
+    {NewValue, Uses2} = rename(Value, Names, IdList, Module),
+    {Map#map{key = NewKey, value = NewValue}, Uses1 ++ Uses2};
 rename(#name{type = scoped, value = [Value]}, Names, _, Module) ->
-    (dict:fetch(value(Module) ++ [Value], Names))#attr.new_name;
+    Name = (dict:fetch(value(Module) ++ [Value], Names))#attr.new_name,
+    {Name, [Name]};
 rename(#name{type = scoped, value = Value}, Names, _, _) ->
-    (dict:fetch(Value, Names))#attr.new_name;
+    Name = (dict:fetch(Value, Names))#attr.new_name,
+    {Name, [Name]};
 rename(#name{value = [Value]}, _, _, _) ->
-    Value;
+    {Value, []};
 rename(Element, _, _, _) ->
-    Element.
-
-               %% dict:fetch(value(hd(A)), Names)
+    {Element, []}.
 
 line(#name{line = Line}) -> Line.
 

@@ -45,5 +45,8 @@
 
 -record(file, {includes = [] :: [#include{}],
                modules = [] :: [#module{}],
-               names = dict:new()
+               %% Analysis
+               names = dict:new(),
+               %% Rename
+               uses :: [atom()]
               }).
