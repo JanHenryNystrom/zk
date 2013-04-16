@@ -37,7 +37,7 @@
 % Distro
 %%%-------------------------------------------------------------------
 parse_distro_test_() ->
-    [?_test(?assertMatch(#file{}, zk_hadoop_record_parse:file(File))) ||
+    [?_test(?assertMatch({ok, #file{}}, zk_hadoop_record_parse:file(File))) ||
         File <- files(distro)].
 
 

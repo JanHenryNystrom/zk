@@ -16,19 +16,28 @@
 %%==============================================================================
 
 -record(file, {includes = [],
-               modules = []}).
+               modules = []
+              }).
 
--record(include, {path = ""}).
+-record(include, {path = "", line}).
 
 -record(module, {name = "",
-                 records = []}).
+                 records = [],
+                 line}).
 
 -record(record, {name,
-                 fields}).
+                 fields,
+                 line}).
 
 -record(field, {type,
-                name}).
+                name,
+                line}).
 
--record(vector, {type}).
+-record(vector, {type, line}).
 
--record(map, {key, value}).
+-record(map, {key, value, line}).
+
+-record(name, {type = simple :: simple | scoped,
+               value,
+               line
+              }).

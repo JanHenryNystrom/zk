@@ -16,17 +16,18 @@
 
 %%%-------------------------------------------------------------------
 %%% @doc
-%%%   eunit unit tests for zk_hadoop_record_scan tokenizer.
+%%%   eunit unit tests for zk_hadoop_record compiler.
 %%% @end
 %%%
 %% @author Jan Henry Nystrom <JanHenryNystrom@gmail.com>
 %% @copyright (C) 2013, Jan Henry Nystrom <JanHenryNystrom@gmail.com>
 %%%-------------------------------------------------------------------
--module(scan_tests).
+-module(zk_hadoop_record_tests).
 -copyright('Jan Henry Nystrom <JanHenryNystrom@gmail.com>').
 
 %% Includes
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("zk/src/zk_hadoop_record.hrl").
 
 %% ===================================================================
 %% Tests.
@@ -35,9 +36,26 @@
 %%%-------------------------------------------------------------------
 % Distro
 %%%-------------------------------------------------------------------
-scan_distro_test_() ->
-    [ ?_test(?assertMatch({ok, _}, zk_hadoop_record_scan:file(File))) ||
+parse_distro_test_() ->
+    [?_test(?assertMatch(_, zk_hadoop_record:compile(File))) ||
         File <- files(distro)].
+
+
+parse_distro_src_test_() ->
+    [?_test(?assertMatch(_,
+                         zk_hadoop_record:compile(filename:basename(File),
+                                                  [{src_dir,
+                                                    filename:dirname(File)}])))
+
+     || File <- files(distro)].
+
+parse_distro_src_atom_test_() ->
+    [?_test(
+        ?assertMatch(_,
+                     zk_hadoop_record:compile(
+                       list_to_atom(filename:basename(File)),
+                       [{src_dir,filename:dirname(File)}])))
+     || File <- files(distro)].
 
 
 %% ===================================================================

@@ -64,14 +64,14 @@ module : {token, {t_module, TokenLine}}.
 class : {token, {t_class, TokenLine}}.
 vector : {token, {t_vector, TokenLine}}.
 map : {token, {t_map, TokenLine}}.
-byte : {token, {t_byte, TokenLine}}.
-boolean : {token, {t_boolean, TokenLine}}.
-int : {token, {t_int, TokenLine}}.
-long : {token, {t_long, TokenLine}}.
-float : {token, {t_float, TokenLine}}.
-double : {token, {t_double, TokenLine}}.
-ustring : {token, {t_ustring, TokenLine}}.
-buffer : {token, {t_buffer, TokenLine}}.
+byte : {token, {t_byte, TokenLine, byte}}.
+boolean : {token, {t_boolean, TokenLine, boolean}}.
+int : {token, {t_int, TokenLine, int}}.
+long : {token, {t_long, TokenLine, long}}.
+float : {token, {t_float, TokenLine, float}}.
+double : {token, {t_double, TokenLine, double}}.
+ustring : {token, {t_ustring, TokenLine, ustring}}.
+buffer : {token, {t_buffer, TokenLine, buffer}}.
 
 {Name}  : {token, {t_name, TokenLine, list_to_atom(TokenChars)}}.
 
@@ -101,8 +101,10 @@ Erlang code.
 %%--------------------------------------------------------------------
 file(File) ->
     {ok, Bin} = file:read_file(File),
-    {ok, Tokens, _} = string(binary_to_list(Bin)),
-    Tokens.
+    case string(binary_to_list(Bin)) of
+        {ok, Tokens, _} -> {ok, Tokens};
+        Error -> Error
+    end.
 
 %%====================================================================
 %% Internal functions
