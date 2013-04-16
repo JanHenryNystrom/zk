@@ -208,35 +208,37 @@ rename(File = #file{includes = [], modules = Modules, names = Names}, _) ->
     Shrunk = shrink(longest_prefix(Names), Names),
     IdList = [{Id, N} ||
                  {_, #attr{id = Id, new_name = N}} <- dict:to_list(Shrunk)],
-    Modules1 = [rename(Module, Shrunk, IdList) || Module <- Modules],
+    Modules1 = [rename(Module, Shrunk, IdList, none) || Module <- Modules],
     {ok, File#file{modules = Modules1}}.
 
-rename(Module = #module{id = Id, records = Recs}, Names, IdList) ->
+rename(Module = #module{name = Name, id=Id, records=Recs}, Names, IdList, _) ->
     {_, NewName} = lists:keyfind(Id, 1, IdList),
-    Recs1 = [rename(Rec, Names, IdList) || Rec <- Recs],
+    Recs1 = [rename(Rec, Names, IdList, Name) || Rec <- Recs],
     Module#module{name = NewName, records = Recs1};
-rename(Rec = #record{id = Id, fields = Fields}, Names, IdList) ->
+rename(Rec = #record{id = Id, fields = Fields}, Names, IdList, Module) ->
     {_, NewName} = lists:keyfind(Id, 1, IdList),
-    Fields1 = [rename(Field, Names, IdList) || Field <- Fields],
+    Fields1 = [rename(Field, Names, IdList, Module) || Field <- Fields],
     Rec#record{name = NewName, fields = Fields1};
-rename(Field = #field{name = Name, type = Type}, Names, IdList) ->
-    NewType = rename(Type, Names, IdList),
+rename(Field = #field{name = Name, type = Type}, Names, IdList, Module) ->
+    NewType = rename(Type, Names, IdList, Module),
     Field#field{name = value(Name), type = NewType};
-rename(Vector = #vector{type = Type}, Names, IdList) ->
-    NewType = rename(Type, Names, IdList),
+rename(Vector = #vector{type = Type}, Names, IdList, Module) ->
+    NewType = rename(Type, Names, IdList, Module),
     Vector#vector{type = NewType};
-rename(Map = #map{key = Key, value = Value}, Names, IdList) ->
-    NewKey = rename(Key, Names, IdList),
-    NewValue = rename(Value, Names, IdList),
+rename(Map = #map{key = Key, value = Value}, Names, IdList, Module) ->
+    NewKey = rename(Key, Names, IdList, Module),
+    NewValue = rename(Value, Names, IdList, Module),
     Map#map{key = NewKey, value = NewValue};
-rename(#name{type = scoped, value = [Value]}, _, _) ->
-    Value;
-rename(#name{type = scoped, value = Value}, Names, _) ->
+rename(#name{type = scoped, value = [Value]}, Names, _, Module) ->
+    (dict:fetch(value(Module) ++ [Value], Names))#attr.new_name;
+rename(#name{type = scoped, value = Value}, Names, _, _) ->
     (dict:fetch(Value, Names))#attr.new_name;
-rename(#name{value = [Value]}, _, _) ->
+rename(#name{value = [Value]}, _, _, _) ->
     Value;
-rename(Element, _, _) ->
+rename(Element, _, _, _) ->
     Element.
+
+               %% dict:fetch(value(hd(A)), Names)
 
 line(#name{line = Line}) -> Line.
 
