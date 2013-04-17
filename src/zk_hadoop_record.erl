@@ -136,6 +136,155 @@ chain(Result, _, []) -> Result;
 chain({ok, Previous}, Opts, [Fun | T]) -> chain(Fun(Previous, Opts), Opts, T);
 chain(Error, _, _) -> {error, Error}.
 
+%% ===================================================================
+%% Read file
+%% ===================================================================
+
+read_file(File, #opts{src_dir = Dir}) ->
+    FileName = case filename:extension(File) of
+                   [] -> filename:join(Dir, File ++ ".jute");
+                   ".jute" -> filename:join(Dir, File)
+               end,
+    file:read_file(FileName).
+
+%% ===================================================================
+%%  Scan
+%% ===================================================================
+
+scan(Bin, _) ->
+    case zk_hadoop_record_scan:string(binary_to_list(Bin)) of
+        {ok, Tokens, _} -> {ok, Tokens};
+        Error -> Error
+    end.
+
+%% ===================================================================
+%% Parse
+%% ===================================================================
+
+parse(Tokens, _) -> zk_hadoop_record_parse:parse(Tokens).
+
+%% ===================================================================
+%% Analyse
+%% ===================================================================
+
+analyse(File = #file{includes = [], modules = Modules, names = Names}, _) ->
+    {ok, File#file{names = lists:foldl(fun analyse_module/2, Names, Modules)}}.
+
+analyse_module(#module{name = Name, records = Recs, id = Id}, Names) ->
+    Value = value(Name),
+    case dict:is_key(Value, Names) of
+        true ->
+            exit({duplicate_name, Value, line(Name)});
+        false ->
+            Names0 = dict:store(module,
+                                Name,
+                                dict:store(Value,
+                                           #attr{type = module, id = Id},
+                                           Names)),
+            Names1 = lists:foldl(fun analyse_record/2, Names0, Recs),
+            dict:erase(module, Names1)
+    end.
+
+analyse_record(#record{name = Name, line = Line, id = Id}, Names) ->
+    Module = dict:fetch(module, Names),
+    FullName = fullname(Module, Name),
+    case dict:is_key(FullName, Names) of
+        true ->
+            exit({duplicate_name, Name, Line});
+        false ->
+            dict:store(FullName, #attr{type = record, id = Id}, Names)
+    end.
+
+line(#name{line = Line}) -> Line.
+
+fullname(#name{type = simple, value  = Value1}, #name{value = Value2}) ->
+    [Value1, Value2];
+fullname(#name{value  = Value1}, #name{value = Value2}) ->
+    Value1 ++ [Value2].
+
+%% ===================================================================
+%% Rename
+%% ===================================================================
+
+rename(File = #file{includes = [], modules = Modules, names = Names}, _) ->
+    Shrunk = shrink(longest_prefix(Names), Names),
+    IdList = [{Id, N} ||
+                 {_, #attr{id = Id, new_name = N}} <- dict:to_list(Shrunk)],
+    {Modules1, Uses} =
+        lists:unzip([rename(Module, Shrunk, IdList, none) ||
+                        Module <- Modules]),
+    {ok, File#file{modules = Modules1, uses=lists:usort(lists:flatten(Uses))}}.
+
+rename(Module = #module{name = Name, id=Id, records=Recs}, Names, IdList, _) ->
+    {_, NewName} = lists:keyfind(Id, 1, IdList),
+    {Recs1, Uses} =
+        lists:unzip([rename(Rec, Names, IdList, Name) || Rec <- Recs]),
+    {Module#module{name = NewName, records = Recs1}, Uses};
+rename(Rec = #record{id = Id, fields = Fields}, Names, IdList, Module) ->
+    {_, NewName} = lists:keyfind(Id, 1, IdList),
+    {Fields1, Uses} =
+        lists:unzip([rename(Field, Names, IdList, Module) || Field <- Fields]),
+    {Rec#record{name = NewName, fields = Fields1}, Uses};
+rename(Field = #field{name = Name, type = Type}, Names, IdList, Module) ->
+    {NewType, Uses} = rename(Type, Names, IdList, Module),
+    {Field#field{name = value(Name), type = NewType}, Uses};
+rename(Vector = #vector{type = Type}, Names, IdList, Module) ->
+    {NewType, Uses} = rename(Type, Names, IdList, Module),
+    {Vector#vector{type = NewType}, Uses};
+rename(Map = #map{key = Key, value = Value}, Names, IdList, Module) ->
+    {NewKey, Uses1} = rename(Key, Names, IdList, Module),
+    {NewValue, Uses2} = rename(Value, Names, IdList, Module),
+    {Map#map{key = NewKey, value = NewValue}, Uses1 ++ Uses2};
+rename(#name{type = scoped, value = [Value]}, Names, _, Module) ->
+    Name = (dict:fetch(value(Module) ++ [Value], Names))#attr.new_name,
+    {Name, [Name]};
+rename(#name{type = scoped, value = Value}, Names, _, _) ->
+    Name = (dict:fetch(Value, Names))#attr.new_name,
+    {Name, [Name]};
+rename(#name{value = [Value]}, _, _, _) ->
+    {Value, []};
+rename(Element, _, _, _) ->
+    {Element, []}.
+
+longest_prefix(Names) ->
+    Modules = [First | _] =
+        dict:fold(fun(K, V, Acc) ->
+                          case type(V) of
+                              module -> [K | Acc];
+                              _ -> Acc
+                          end
+                  end,
+                  [],
+                  Names),
+    lists:foldl(fun longest_prefix/2, but_last(First), Modules).
+
+type(#attr{type = Type}) -> Type;
+type(_) -> none.
+
+longest_prefix([_], _) -> [];
+longest_prefix([H | T], [H | T1]) -> [H | longest_prefix(T, T1)];
+longest_prefix(_, _) -> [].
+
+but_last([]) -> [];
+but_last([H, _]) -> [H];
+but_last([_]) -> [];
+but_last([H | T]) -> [H | but_last(T)].
+
+shrink([], Names) -> Names;
+shrink(Prefix, Names) ->
+    dict:fold(fun(K, V, A) ->  shrink(Prefix, K, V, A) end, Names, Names).
+
+shrink(Prefix, K, V = #attr{}, Names) ->
+    dict:store(K, V#attr{new_name = remove_fuse(Prefix, K)}, Names);
+shrink(_, _, _, Names) -> Names.
+
+remove_fuse([], Key) -> list_to_atom(join(Key, []));
+remove_fuse([H | T], [H | Key]) -> remove_fuse(T, Key).
+
+%% ===================================================================
+%% Gen
+%% ===================================================================
+
 gen(File, Opts = #opts{dest_name = Name}) when is_atom(Name) ->
     gen(File, Opts#opts{dest_name = atom_to_list(Name)});
 gen(#file{modules = Modules, uses = Uses}, Opts) ->
@@ -197,127 +346,11 @@ gen_type(hrl, #vector{type = Type}, Stream) ->
 gen_type(hrl, Type, Stream) ->
     io:format(Stream, "~p()", [Type]).
 
-read_file(File, #opts{src_dir = Dir}) ->
-    FileName = case filename:extension(File) of
-                   [] -> filename:join(Dir, File ++ ".jute");
-                   ".jute" -> filename:join(Dir, File)
-               end,
-    file:read_file(FileName).
-
-scan(Bin, _) ->
-    case zk_hadoop_record_scan:string(binary_to_list(Bin)) of
-        {ok, Tokens, _} -> {ok, Tokens};
-        Error -> Error
-    end.
-
-parse(Tokens, _) -> zk_hadoop_record_parse:parse(Tokens).
-
-analyse(File = #file{includes = [], modules = Modules, names = Names}, _) ->
-    {ok, File#file{names = lists:foldl(fun analyse_module/2, Names, Modules)}}.
-
-analyse_module(#module{name = Name, records = Recs, id = Id}, Names) ->
-    Value = value(Name),
-    case dict:is_key(Value, Names) of
-        true ->
-            exit({duplicate_name, Value, line(Name)});
-        false ->
-            Names0 = dict:store(module,
-                                Name,
-                                dict:store(Value,
-                                           #attr{type = module, id = Id},
-                                           Names)),
-            Names1 = lists:foldl(fun analyse_record/2, Names0, Recs),
-            dict:erase(module, Names1)
-    end.
-
-analyse_record(#record{name = Name, line = Line, id = Id}, Names) ->
-    Module = dict:fetch(module, Names),
-    FullName = fullname(Module, Name),
-    case dict:is_key(FullName, Names) of
-        true ->
-            exit({duplicate_name, Name, Line});
-        false ->
-            dict:store(FullName, #attr{type = record, id = Id}, Names)
-    end.
-
-rename(File = #file{includes = [], modules = Modules, names = Names}, _) ->
-    Shrunk = shrink(longest_prefix(Names), Names),
-    IdList = [{Id, N} ||
-                 {_, #attr{id = Id, new_name = N}} <- dict:to_list(Shrunk)],
-    {Modules1, Uses} =
-        lists:unzip([rename(Module, Shrunk, IdList, none) ||
-                        Module <- Modules]),
-    {ok, File#file{modules = Modules1, uses=lists:usort(lists:flatten(Uses))}}.
-
-rename(Module = #module{name = Name, id=Id, records=Recs}, Names, IdList, _) ->
-    {_, NewName} = lists:keyfind(Id, 1, IdList),
-    {Recs1, Uses} =
-        lists:unzip([rename(Rec, Names, IdList, Name) || Rec <- Recs]),
-    {Module#module{name = NewName, records = Recs1}, Uses};
-rename(Rec = #record{id = Id, fields = Fields}, Names, IdList, Module) ->
-    {_, NewName} = lists:keyfind(Id, 1, IdList),
-    {Fields1, Uses} =
-        lists:unzip([rename(Field, Names, IdList, Module) || Field <- Fields]),
-    {Rec#record{name = NewName, fields = Fields1}, Uses};
-rename(Field = #field{name = Name, type = Type}, Names, IdList, Module) ->
-    {NewType, Uses} = rename(Type, Names, IdList, Module),
-    {Field#field{name = value(Name), type = NewType}, Uses};
-rename(Vector = #vector{type = Type}, Names, IdList, Module) ->
-    {NewType, Uses} = rename(Type, Names, IdList, Module),
-    {Vector#vector{type = NewType}, Uses};
-rename(Map = #map{key = Key, value = Value}, Names, IdList, Module) ->
-    {NewKey, Uses1} = rename(Key, Names, IdList, Module),
-    {NewValue, Uses2} = rename(Value, Names, IdList, Module),
-    {Map#map{key = NewKey, value = NewValue}, Uses1 ++ Uses2};
-rename(#name{type = scoped, value = [Value]}, Names, _, Module) ->
-    Name = (dict:fetch(value(Module) ++ [Value], Names))#attr.new_name,
-    {Name, [Name]};
-rename(#name{type = scoped, value = Value}, Names, _, _) ->
-    Name = (dict:fetch(Value, Names))#attr.new_name,
-    {Name, [Name]};
-rename(#name{value = [Value]}, _, _, _) ->
-    {Value, []};
-rename(Element, _, _, _) ->
-    {Element, []}.
-
-line(#name{line = Line}) -> Line.
+%% ===================================================================
+%% Common parts
+%% ===================================================================
 
 value(#name{value = Value}) -> Value.
-
-fullname(#name{type = simple, value  = Value1}, #name{value = Value2}) ->
-    [Value1, Value2];
-fullname(#name{value  = Value1}, #name{value = Value2}) ->
-    Value1 ++ [Value2].
-
-longest_prefix(Names) ->
-    Modules = [First | _] =
-        dict:fold(fun(K, V, Acc) ->
-                          case type(V) of
-                              module -> [K | Acc];
-                              _ -> Acc
-                          end
-                  end,
-                  [],
-                  Names),
-    lists:foldl(fun longest_prefix/2, but_last(First), Modules).
-
-type(#attr{type = Type}) -> Type;
-type(_) -> none.
-
-longest_prefix([_], _) -> [];
-longest_prefix([H | T], [H | T1]) -> [H | longest_prefix(T, T1)];
-longest_prefix(_, _) -> [].
-
-shrink([], Names) -> Names;
-shrink(Prefix, Names) ->
-    dict:fold(fun(K, V, A) ->  shrink(Prefix, K, V, A) end, Names, Names).
-
-shrink(Prefix, K, V = #attr{}, Names) ->
-    dict:store(K, V#attr{new_name = remove_fuse(Prefix, K)}, Names);
-shrink(_, _, _, Names) -> Names.
-
-remove_fuse([], Key) -> list_to_atom(join(Key, []));
-remove_fuse([H | T], [H | Key]) -> remove_fuse(T, Key).
 
 join([], Acc) -> lists:reverse(Acc);
 join([H | T], Acc) ->
@@ -355,11 +388,6 @@ join_u(_, [H | T], R, Acc) ->
     join_l(T, R, [H, $_| Acc]).
 
 down(U) -> U + 32.
-
-but_last([]) -> [];
-but_last([H, _]) -> [H];
-but_last([_]) -> [];
-but_last([H | T]) -> [H | but_last(T)].
 
 %% format_error(Module, Message, Line) ->
 %%     io:format("Error Line ~p:~s~n", [Line, Module:format_error(Message)]).
