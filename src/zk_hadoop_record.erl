@@ -120,11 +120,11 @@
           "encode_boolean(true) -> <<1>>;\n"
           "encode_boolean(false) -> <<0>>.\n\n"},
          {int,
-          "encode_int(Integer) when Integer >= -120, Integer < -120 ->"
+          "encode_int(Integer) when Integer >= -120, Integer < 128 ->"
           "<<Integer/signed>>;\n"
           "encode_int(I) -> I.\n\n"},
          {long,
-          "encode_long(Integer) when Integer >= -120, Integer < -120 ->"
+          "encode_long(Integer) when Integer >= -120, Integer < 128 ->"
           " <<Integer/signed>>;\n"
           "encode_long(I) -> I.\n\n"},
          {float, "encode_float(Float) -> <<Float:32/float>>.\n\n"},
