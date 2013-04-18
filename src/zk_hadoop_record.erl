@@ -114,21 +114,27 @@
         "decode(Binary) -> do_decode(Binary)."
        ).
 
--define(ERL_ENCODE,
-        "encode_byte(Byte) -> <<Byte>>.\n\n"
-        "encode_boolean(true) -> <<1>>;\n"
-        "encode_boolean(false) -> <<0>>.\n\n"
-        "encode_int(Integer) when Integer >= -120, Integer < -120 ->"
-        "<<Integer/signed>>;\n"
-        "encode_int(I) -> I.\n\n"
-        "encode_long(Integer) when Integer >= -120, Integer < -120 ->"
-        " <<Integer/signed>>;\n"
-        "encode_long(I) -> I.\n\n"
-        "encode_float(Float) -> <<Float:32/float>>.\n\n"
-        "encode_double(Float) -> <<Float:64/float>>.\n\n"
-        "encode_ustring(String) -> [encode_int(byte_size(String)), String].\n\n"
-        "encode_buffer(Buffer) -> [encode_int(byte_size(Buffer)), Buffer]."
-        ).
+-define(ERL_ENCODE_MAP,
+        [{byte, "encode_byte(Byte) -> <<Byte>>.\n\n"},
+         {boolean,
+          "encode_boolean(true) -> <<1>>;\n"
+          "encode_boolean(false) -> <<0>>.\n\n"},
+         {int,
+          "encode_int(Integer) when Integer >= -120, Integer < -120 ->"
+          "<<Integer/signed>>;\n"
+          "encode_int(I) -> I.\n\n"},
+         {long,
+          "encode_long(Integer) when Integer >= -120, Integer < -120 ->"
+          " <<Integer/signed>>;\n"
+          "encode_long(I) -> I.\n\n"},
+         {float, "encode_float(Float) -> <<Float:32/float>>.\n\n"},
+         {double, "encode_double(Float) -> <<Float:64/float>>.\n\n"},
+         {ustring,
+          "encode_ustring(String) ->"
+          " [encode_int(byte_size(String)), String].\n\n"},
+         {buffer,
+          "encode_buffer(Buffer) -> [encode_int(byte_size(Buffer)), Buffer]."}
+        ]).
 
 -define(ERL_POSTAMBLE,
         "%% ===========================================================\n"
@@ -323,7 +329,7 @@ rename(#name{type = scoped, value = Value}, Names, _, _) ->
 rename(#name{value = [Value]}, _, _, _) ->
     {Value, []};
 rename(Element, _, _, _) ->
-    {Element, []}.
+    {Element, [Element]}.
 
 longest_prefix(Names) ->
     Modules = [First | _] =
@@ -391,7 +397,7 @@ gen(hrl, [preamble, Uses | Modules], Stream, Opts) ->
     io:format(Stream, "%%~60c~n%% Types~n%%~60c~n~n", [$=, $=]),
     io:format(Stream, "~s~n~n", [?TYPE_PREAMBLE]),
     io:format(Stream, "%% Generated~n", []),
-    [gen_type(Use, Stream) || Use <- Uses],
+    [gen_type(Use, Stream) || Use <- Uses -- ?BUILT_IN],
     io:format(Stream, "~n", []);
 gen(erl, [preamble, _Uses | Modules], Stream, Opts) ->
     #opts{dest_name = Name, copyright = Copyright, license = License} = Opts,
@@ -403,12 +409,7 @@ gen(erl, [preamble, _Uses | Modules], Stream, Opts) ->
     io:format(Stream, "-module(~s).~n-copyright('~s').~n~n",
               [Name, ?COPYRIGHT_PREAMBLE]),
     io:format(Stream,
-              "%% API~n-export([encode/1, encode/2, decode/1]).~n~n"
-              "%% To avoid unused warning for primitive encodings~n"
-              "-export([encode_byte/1, encode_boolean/1]).~n"
-              "-export([encode_int/1, encode_long/1]).~n"
-              "-export([encode_float/1, encode_double/1]).~n"
-              "-export([encode_ustring/1, encode_buffer/1]).~n~n",
+              "%% API~n-export([encode/1, encode/2, decode/1]).~n~n",
               []),
     io:format(Stream, "%% Includes~n-include(\"~s\").~n~n", [hrl_file(Opts)]),
     io:format(Stream, "~s~n~n", [?ERL_PREAMBLE]),
@@ -416,8 +417,13 @@ gen(erl, [preamble, _Uses | Modules], Stream, Opts) ->
     io:format(Stream, "%%~60c~n%% Encoding~n%%~60c~n~n", [$-, $-]),
     Variables = [variables(Module) || Module <- Modules],
     gen_do_encode(Variables, Stream),
-    io:format(Stream, "~s~n~n", [?ERL_ENCODE]),
-    io:format(Stream, "%%~60c~n%% Decoding~n%%~60c~n~n", [$-, $-]),
+    [case lists:member(Type, _Uses) of
+         true ->
+             io:format(Stream, "~s", [Format]);
+         false ->
+             ok
+     end || {Type, Format} <- ?ERL_ENCODE_MAP],
+    io:format(Stream, "~n~n%%~60c~n%% Decoding~n%%~60c~n~n", [$-, $-]),
     gen_do_decode(Variables, Stream),
     io:format(Stream, "~s~n", [?ERL_POSTAMBLE]);
 gen(Type, [H | T], Stream, Opts) ->
