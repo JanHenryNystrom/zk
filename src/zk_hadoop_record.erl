@@ -404,7 +404,7 @@ gen(erl, [preamble, _Uses | Modules], Stream, Opts) ->
               [Name, ?COPYRIGHT_PREAMBLE]),
     io:format(Stream,
               "%% API~n-export([encode/1, encode/2, decode/1]).~n~n"
-              "%% To avoid unused warning when all primitve encodings used~n"
+              "%% To avoid unused warning for primitive encodings~n"
               "-export([encode_byte/1, encode_boolean/1]).~n"
               "-export([encode_int/1, encode_long/1]).~n"
               "-export([encode_float/1, encode_double/1]).~n"
@@ -529,7 +529,7 @@ gen_do_encode_type(#map{key = Key, value = Value}, Var) ->
        Var]).
 
 gen_do_decode(_, Stream) ->
-    io:format(Stream, "do_decode(_) -> dummy.", []).
+    io:format(Stream, "do_decode(_) -> dummy.~n~n", []).
 
 hrl_file(#opts{dest_name = Name, dest_dir = Dir, include_dir = IDir}) ->
     case IDir of
@@ -618,6 +618,3 @@ parse_opt({license, License}, Opts) ->
     Opts#opts{license = License};
 parse_opt({copyright, Copyright}, Opts) ->
     Opts#opts{copyright = Copyright}.
-
-
-
