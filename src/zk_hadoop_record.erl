@@ -56,15 +56,92 @@
         ).
 
 -define(TYPE_PREAMBLE,
-        "%% Types\n\n"
         "%% Primitive\n"
         "-type int()     :: integer(). %% :32/integer-big-signed\n"
         "-type long()    :: integer(). %% :64/integer-big-signed\n"
-        "-type float()   :: float().   %% :32/float\n"
         "-type double()  :: float().   %% :64/float\n"
-        "-type ustring() :: binary().  %% :X/bytes in unicode\n"
+        "-type ustring() :: binary().  %% :X/bytes in utf8\n"
         "-type buffer()  :: binary().  %% :X/bytes"
         ).
+
+-define(ERL_PREAMBLE,
+        "%% Types\n"
+        "-type opt() :: binary. %% Encode generates binaries\n\n"
+        "%% Records\n"
+        "-record(opts, {return_type = iolist :: iolist | binary}).\n\n"
+        "%% ===========================================================\n"
+        "%% API functions.\n"
+        "%% ===========================================================\n"
+        "\n"
+        "%%------------------------------------------------------------\n"
+        "%% Function: encode(Term) -> HadoopRecord.\n"
+        "%% @doc\n"
+        "%%   Encodes the structured Erlang term as an iolist.\n"
+        "%%   Equivalent of encode(Term, []) -> HadoopRecord.\n"
+        "%% @end\n"
+        "%%------------------------------------------------------------\n"
+        "-spec encode(_) -> iolist().\n"
+        "%%------------------------------------------------------------\n"
+        "encode(Term) -> encode(Term, []).\n"
+        "\n"
+        "%%------------------------------------------------------------\n"
+        "%% Function: encode(Term, Options) -> HadoopRecord.\n"
+        "%% @doc\n"
+        "%%   Encodes the structured Erlang term as an iolist or binary.\n"
+        "%%   Encode will give an exception if the erlang term is not"
+        " well formed.\n"
+        "%%   Options are:\n"
+        "%%     binary -> a binary is returned\n"
+        "%%     iolist -> a iolist is returned\n"
+        "%% @end\n"
+        "%%------------------------------------------------------------\n"
+        "-spec encode(_, [opt()]) -> iolist() | binary().\n"
+        "%%------------------------------------------------------------\n"
+        "encode(Term, Opts) ->\n"
+        "    case (parse_opts(Opts, #opts{}))#opts.return_type of\n"
+        "        iolist -> do_encode(Term);\n"
+        "        binary -> iolist_to_binary(do_encode(Term))\n"
+        "    end.\n"
+        "\n"
+        "%%------------------------------------------------------------\n"
+        "%% Function: decode(HadoopRecord) -> Term.\n"
+        "%% @doc\n"
+        "%%   Decodes the binary into a structured Erlang term.\n"
+        "%% @end\n"
+        "%%------------------------------------------------------------\n"
+        "-spec decode(binary()) -> _.\n"
+        "%%------------------------------------------------------------\n"
+        "decode(Binary) -> do_decode(Binary)."
+       ).
+
+-define(ERL_ENCODE,
+        "encode_byte(Byte) -> <<Byte>>.\n\n"
+        "encode_boolean(true) -> <<1>>;\n"
+        "encode_boolean(false) -> <<0>>.\n\n"
+        "encode_int(Integer) when Integer >= -120, Integer < -120 ->"
+        "<<Integer/signed>>;\n"
+        "encode_int(I) -> I.\n\n"
+        "encode_long(Integer) when Integer >= -120, Integer < -120 ->"
+        " <<Integer/signed>>;\n"
+        "encode_long(I) -> I.\n\n"
+        "encode_float(Float) -> <<Float:32/float>>.\n\n"
+        "encode_double(Float) -> <<Float:64/float>>.\n\n"
+        "encode_ustring(String) -> [encode_int(byte_size(String)), String].\n\n"
+        "encode_buffer(Buffer) -> [encode_int(byte_size(Buffer)), Buffer]."
+        ).
+
+-define(ERL_POSTAMBLE,
+        "%% ===========================================================\n"
+        "%% Common parts\n"
+        "%% ===========================================================\n\n"
+        "parse_opts(Opts, Rec) -> lists:foldl(fun parse_opt/2, Rec, Opts).\n"
+        "\n"
+        "parse_opt(binary, Opts) -> Opts#opts{return_type = binary};\n"
+        "parse_opt(iolist, Opts) -> Opts#opts{return_type = iolist}."
+        ).
+
+-define(CASE_DIFF, 32).
+-define(BUILT_IN, [boolean, byte, int, long, float, double, ustring, buffer]).
 
 %% Records
 -record(opts, {dest_name :: string(),
@@ -294,12 +371,14 @@ gen(#file{modules = Modules, uses = Uses}, Opts) ->
     HrlFile = hrl_file(Opts),
     {ok, HrlStream} = file:open(HrlFile, [write]),
     gen(hrl, [preamble, Uses | Modules], HrlStream, Opts),
+    file:close(HrlStream),
     ErlFile = filename:join(Dir, Name ++ ".erl"),
     {ok, ErlStream} = file:open(ErlFile, [write]),
     gen(erl, [preamble, Uses | Modules], ErlStream, Opts),
+    file:close(ErlStream),
     ok.
 
-gen(_, [], Stream, _) -> file:close(Stream);
+gen(_, [], _, _) -> ok;
 gen(hrl, [preamble, Uses | Modules], Stream, Opts) ->
     #opts{copyright = Copyright, license = License} = Opts,
     io:format(Stream, "%%~60c~n%% Copyright ~s~n", [$=, Copyright]),
@@ -307,25 +386,40 @@ gen(hrl, [preamble, Uses | Modules], Stream, Opts) ->
     io:format(Stream, "%%~60c~n~s ~p~n%% ~s~n%%~60c~n~n",
               [$-, "%% This module was generated by", ?MODULE,
                "Copyright " ++ ?COPYRIGHT_PREAMBLE, $-]),
+    io:format(Stream, "%%~60c~n%% Records~n%%~60c~n~n", [$=, $=]),
+    gen(hrl, Modules, Stream, Opts),
+    io:format(Stream, "%%~60c~n%% Types~n%%~60c~n~n", [$=, $=]),
     io:format(Stream, "~s~n~n", [?TYPE_PREAMBLE]),
     io:format(Stream, "%% Generated~n", []),
     [gen_type(Use, Stream) || Use <- Uses],
-    io:format(Stream, "~n", []),
-    gen(hrl, Modules, Stream, Opts);
+    io:format(Stream, "~n", []);
 gen(erl, [preamble, _Uses | Modules], Stream, Opts) ->
     #opts{dest_name = Name, copyright = Copyright, license = License} = Opts,
     io:format(Stream, "%%~60c~n%% Copyright ~s~n", [$=, Copyright]),
     io:format(Stream, "%%~n~s~n%%~n%%~60c~n~n", [License, $=]),
-    io:format(Stream, "%%~60c~n~s ~p~n%% ~s~n%%~60c~n",
+    io:format(Stream, "%%~60c~n~s ~p~n%% ~s~s~n%%~60c~n",
               [$-, "%% This module was generated by", ?MODULE,
-               "Copyright " ++ ?COPYRIGHT_PREAMBLE, $-]),
+               "Copyright ", ?COPYRIGHT_PREAMBLE, $-]),
     io:format(Stream, "-module(~s).~n-copyright('~s').~n~n",
               [Name, ?COPYRIGHT_PREAMBLE]),
     io:format(Stream,
-              "%% API~n-export([encode/1, encode/2, decode/1, decode/2]).~n~n",
+              "%% API~n-export([encode/1, encode/2, decode/1]).~n~n"
+              "%% To avoid unused warning when all primitve encodings used~n"
+              "-export([encode_byte/1, encode_boolean/1]).~n"
+              "-export([encode_int/1, encode_long/1]).~n"
+              "-export([encode_float/1, encode_double/1]).~n"
+              "-export([encode_ustring/1, encode_buffer/1]).~n~n",
               []),
     io:format(Stream, "%% Includes~n-include(\"~s\").~n~n", [hrl_file(Opts)]),
-    gen(erl, Modules, Stream, Opts);
+    io:format(Stream, "~s~n~n", [?ERL_PREAMBLE]),
+    io:format(Stream, "%%~60c~n%% Internal functions~n%%~60c~n~n", [$=, $=]),
+    io:format(Stream, "%%~60c~n%% Encoding~n%%~60c~n~n", [$-, $-]),
+    Variables = [variables(Module) || Module <- Modules],
+    gen_do_encode(Variables, Stream),
+    io:format(Stream, "~s~n~n", [?ERL_ENCODE]),
+    io:format(Stream, "%%~60c~n%% Decoding~n%%~60c~n~n", [$-, $-]),
+    gen_do_decode(Variables, Stream),
+    io:format(Stream, "~s~n", [?ERL_POSTAMBLE]);
 gen(Type, [H | T], Stream, Opts) ->
     gen_module(Type, H, Stream),
     gen(Type, T, Stream, Opts).
@@ -333,10 +427,13 @@ gen(Type, [H | T], Stream, Opts) ->
 gen_type(Type, Stream) ->
     io:format(Stream, "-type ~p() :: #~p{}.~n", [Type, Type]).
 
-gen_module(Type, #module{name = Name, records = Records}, Stream) ->
+gen_module(hrl, #module{name = Name, records = Records}, Stream) ->
     io:format(Stream, "%%~60c~n%% Module ~s~n%%~60c~n", [$-, Name, $-]),
-    [gen_record(Type, Record, Stream) || Record <- Records],
-    io:format(Stream, "~n", []).
+    [gen_record(hrl, Record, Stream) || Record <- Records],
+    io:format(Stream, "~n", []);
+gen_module(erl, Module = {Name, _}, Stream) ->
+    io:format(Stream, "%%~60c~n%% Module ~s~n%%~60c~n", [$-, Name, $-]),
+    io:format(Stream, "~p~n~n", [Module]).
 
 gen_record(hrl, #record{name = Name, fields = Fields}, Stream) ->
     io:format(Stream, "-record(~s,~n~8c{~n", [Name, $ ]),
@@ -364,12 +461,103 @@ gen_type(hrl, #vector{type = Type}, Stream) ->
 gen_type(hrl, Type, Stream) ->
     io:format(Stream, "~p()", [Type]).
 
+gen_do_encode([{_, Records}], Stream) ->
+    gen_do_encode(first, Records, Stream),
+    io:format(Stream, ".~n", []);
+gen_do_encode(Modules, Stream) ->
+    gen_do_encode(first, Modules, Stream).
+
+gen_do_encode(_, [], _) -> ok;
+gen_do_encode(first, [{_, Records} | T], Stream) ->
+    gen_do_encode(first, Records, Stream),
+    gen_do_encode(next, T, Stream),
+    io:format(Stream, ".~n~n", []);
+gen_do_encode(next, [{_, Records} | T], Stream) ->
+    gen_do_encode(next, Records, Stream),
+    gen_do_encode(next, T, Stream);
+
+gen_do_encode(first, [{Name, Var, Fields} | T], Stream) ->
+    io:format(Stream, "do_encode(~s = #~s{}) ->~n", [Var, Name]),
+    io:format(Stream, "    #~s{", [Name]),
+    gen_do_encode_fields_match(first, Fields, Stream),
+    io:format(Stream, "~n      } = ~s,~n", [Var]),
+    io:format(Stream, "    [", []),
+    gen_do_encode_fields(first, Fields, Stream),
+    io:format(Stream, "]", []),
+    gen_do_encode(next, T, Stream);
+gen_do_encode(next, [{Name, Var, Fields} | T], Stream) ->
+    io:format(Stream, ";~ndo_encode(~s = #~s{}) ->~n", [Var, Name]),
+    io:format(Stream, "    #~s{", [Name]),
+    gen_do_encode_fields_match(first, Fields, Stream),
+    io:format(Stream, "~n      } = ~s,~n", [Var]),
+    io:format(Stream, "    [", []),
+    gen_do_encode_fields(first, Fields, Stream),
+    io:format(Stream, "]", []),
+    gen_do_encode(next, T, Stream).
+
+gen_do_encode_fields_match(_, [], _) -> ok;
+gen_do_encode_fields_match(first, [{Name, Var, _} | T], Stream) ->
+    io:format(Stream, "~n       ~s = ~s", [Name, Var]),
+    gen_do_encode_fields_match(next, T, Stream);
+gen_do_encode_fields_match(next, [{Name, Var, _} | T], Stream) ->
+    io:format(Stream, ",~n       ~s = ~s", [Name, Var]),
+    gen_do_encode_fields_match(next, T, Stream).
+
+gen_do_encode_fields(_, [], _) -> ok;
+gen_do_encode_fields(first, [{_, Var, Type} | T], Stream) ->
+    io:format(Stream, "~s", [gen_do_encode_type(Type, Var)]),
+    gen_do_encode_fields(next, T, Stream);
+gen_do_encode_fields(next, [{_, Var, Type} | T], Stream) ->
+    io:format(Stream, ",~n     ~s", [gen_do_encode_type(Type, Var)]),
+    gen_do_encode_fields(next, T, Stream).
+
+gen_do_encode_type(Type, Var) when is_atom(Type) ->
+    case lists:member(Type, ?BUILT_IN) of
+        true -> io_lib:format("encode_~p(~s)", [Type, Var]);
+        false -> io_lib:format("do_encode(~s)", [Var])
+    end;
+gen_do_encode_type(#vector{type = Type}, Var) ->
+    io_lib:format(
+      "encode_int(length(~s)),~n     [~s || E <- ~s]",
+      [Var, gen_do_encode_type(Type, "E"), Var]);
+gen_do_encode_type(#map{key = Key, value = Value}, Var) ->
+    io_lib:format(
+      "encode_int(length(~s)),~n     [[~s, ~s] || {Key, Value} <- ~s]",
+      [Var,
+       gen_do_encode_type(Key, "K"),
+       gen_do_encode_type(Value, "Value"),
+       Var]).
+
+gen_do_decode(_, Stream) ->
+    io:format(Stream, "do_decode(_) -> dummy.", []).
+
 hrl_file(#opts{dest_name = Name, dest_dir = Dir, include_dir = IDir}) ->
     case IDir of
         "" -> filename:join(Dir, Name ++ ".hrl");
         _ -> filename:join(IDir, Name ++ ".hrl")
     end.
 
+variables(#module{name = Name, records = Recs}) ->
+    {Name, [variables(Rec) || Rec <- Recs]};
+variables(#record{name = Name, fields = Fields}) ->
+    {Name, name_to_variable(Name), [variables(Field) || Field <- Fields]};
+variables(#field{name = Name, type = Type}) ->
+    {join([Name], []), variables(Name), Type};
+variables(Atom) when is_atom(Atom) ->
+    name_to_variable(Atom).
+
+name_to_variable(Atom) -> name_to_variable(i, atom_to_list(Atom), []).
+
+name_to_variable(_, [], Acc) -> lists:reverse(Acc);
+name_to_variable(_, [$_ | T], Acc) -> name_to_variable(i, T, Acc);
+name_to_variable(X, [H | T], Acc) when H >= $0, H =< $9 ->
+    name_to_variable(X, T, Acc);
+name_to_variable(i, [H | T], Acc) ->
+    name_to_variable(n, T, [up(H) | Acc]);
+name_to_variable(n, [H | T], Acc) ->
+    name_to_variable(n, T, [H | Acc]).
+
+up(D) -> D - ?CASE_DIFF.
 
 %% ===================================================================
 %% Common parts
@@ -412,7 +600,7 @@ join_u(u, [H | T], R, Acc) when H >= $A, H =< $Z ->
 join_u(_, [H | T], R, Acc) ->
     join_l(T, R, [H, $_| Acc]).
 
-down(U) -> U + 32.
+down(U) -> U + ?CASE_DIFF.
 
 %% format_error(Module, Message, Line) ->
 %%     io:format("Error Line ~p:~s~n", [Line, Module:format_error(Message)]).
