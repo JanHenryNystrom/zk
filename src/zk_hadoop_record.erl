@@ -66,7 +66,8 @@
 
 -define(ERL_PREAMBLE,
         "%% Types\n"
-        "-type opt() :: binary. %% Encode generates binaries\n\n"
+        "-type opt() :: binary. %% Encode generates binaries\n"
+        "-type lazy_binary() :: fun(() -> {binary(), lazy_binary()}).\n\n"
         "%% Records\n"
         "-record(opts, {return_type = iolist :: iolist | binary}).\n\n"
         "%% ===========================================================\n"
@@ -104,14 +105,15 @@
         "    end.\n"
         "\n"
         "%%------------------------------------------------------------\n"
-        "%% Function: decode(HadoopRecord) -> Term.\n"
+        "%% Function: decode(Type, HadoopRecord, Lazy) -> Term.\n"
         "%% @doc\n"
         "%%   Decodes the binary into a structured Erlang term.\n"
         "%% @end\n"
         "%%------------------------------------------------------------\n"
-        "-spec decode(binary()) -> _.\n"
+        "-spec decode(atom(), binary(), lazy_binary()) ->\n"
+        "          {_, binary(), lazy_binary()}.\n"
         "%%------------------------------------------------------------\n"
-        "decode(Binary) -> do_decode(Binary)."
+        "decode(Type, Binary, Lazy) -> do_decode(Type, Binary, Lazy)."
        ).
 
 -define(ERL_ENCODE_MAP,
@@ -135,6 +137,38 @@
          {buffer,
           "encode_buffer(Buffer) -> [encode_int(byte_size(Buffer)), Buffer]."}
         ]).
+
+-define(ERL_DECODE_MAP,
+        [{byte, "decode_byte(Byte) -> <<Byte>>.\n\n"},
+         {boolean,
+          "decode_boolean(true) -> <<1>>;\n"
+          "decode_boolean(false) -> <<0>>.\n\n"},
+         {int,
+          "decode_int(Integer) when Integer >= -120, Integer < 128 ->"
+          "<<Integer/signed>>;\n"
+          "decode_int(I) -> I.\n\n"},
+         {long,
+          "decode_long(Integer) when Integer >= -120, Integer < 128 ->"
+          " <<Integer/signed>>;\n"
+          "decode_long(I) -> I.\n\n"},
+         {float, "decode_float(Float) -> <<Float:32/float>>.\n\n"},
+         {double, "decode_double(Float) -> <<Float:64/float>>.\n\n"},
+         {ustring,
+          "decode_ustring(String) ->"
+          " [decode_int(byte_size(String)), String].\n\n"},
+         {buffer,
+          "decode_buffer(Buffer) -> [decode_int(byte_size(Buffer)), Buffer]."}
+        ]).
+
+-define(DECODE_CHAIN,
+        "chain([], Binary, Lazy, Acc) -> {Acc, Binary, Lazy};\n"
+        "chain([{F, Type} | T], Binary, Lazy, Acc) ->\n"
+        "{H1, Binary1, Lazy1} = F(Type, Binary, Lazy),\n"
+        "chain(T, Binary1, Lazy1, [H1 | Acc]).\n"
+        "chain([F | T], Binary, Lazy, Acc) ->\n"
+        "{H1, Binary1, Lazy1} = F(Binary, Lazy),\n"
+        "chain(T, Binary1, Lazy1, [H1 | Acc])."
+       ).
 
 -define(ERL_POSTAMBLE,
         "%% ===========================================================\n"
@@ -409,7 +443,7 @@ gen(erl, [preamble, _Uses | Modules], Stream, Opts) ->
     io:format(Stream, "-module(~s).~n-copyright('~s').~n~n",
               [Name, ?COPYRIGHT_PREAMBLE]),
     io:format(Stream,
-              "%% API~n-export([encode/1, encode/2, decode/1]).~n~n",
+              "%% API~n-export([encode/1, encode/2, decode/3]).~n~n",
               []),
     io:format(Stream, "%% Includes~n-include(\"~s\").~n~n", [hrl_file(Opts)]),
     io:format(Stream, "~s~n~n", [?ERL_PREAMBLE]),
@@ -425,6 +459,13 @@ gen(erl, [preamble, _Uses | Modules], Stream, Opts) ->
      end || {Type, Format} <- ?ERL_ENCODE_MAP],
     io:format(Stream, "~n~n%%~60c~n%% Decoding~n%%~60c~n~n", [$-, $-]),
     gen_do_decode(Variables, Stream),
+    [case lists:member(Type, _Uses) of
+         true ->
+             io:format(Stream, "~s", [Format]);
+         false ->
+             ok
+     end || {Type, Format} <- ?ERL_DECODE_MAP],
+    io:format(Stream, "~n~n~s~n~n", [?DECODE_CHAIN]),
     io:format(Stream, "~s~n", [?ERL_POSTAMBLE]);
 gen(Type, [H | T], Stream, Opts) ->
     gen_module(Type, H, Stream),
@@ -467,11 +508,22 @@ gen_type(hrl, #vector{type = Type}, Stream) ->
 gen_type(hrl, Type, Stream) ->
     io:format(Stream, "~p()", [Type]).
 
+%%------------------------------------------------------------
+%% Encoding
+%%------------------------------------------------------------
+
 gen_do_encode([{_, Records}], Stream) ->
     gen_do_encode(first, Records, Stream),
     io:format(Stream, ".~n", []);
 gen_do_encode(Modules, Stream) ->
     gen_do_encode(first, Modules, Stream).
+
+spaced([], _, _) -> ok;
+spaced([H], Fun, Spacing) -> Fun(H);
+spaced([H | T], Fun, Spacing) ->
+    Fun(H),
+    io:format("~s", [Spacing]),
+    spaced_next(T, Fun, Spacing).
 
 gen_do_encode(_, [], _) -> ok;
 gen_do_encode(first, [{_, Records} | T], Stream) ->
@@ -534,8 +586,91 @@ gen_do_encode_type(#map{key = Key, value = Value}, Var) ->
        gen_do_encode_type(Value, "Value"),
        Var]).
 
-gen_do_decode(_, Stream) ->
-    io:format(Stream, "do_decode(_) -> dummy.~n~n", []).
+%%------------------------------------------------------------
+%% Decoding
+%%------------------------------------------------------------
+
+gen_do_decode([{_, Records}], Stream) ->
+    gen_do_decode(first, Records, Stream),
+    io:format(Stream, ".~n", []);
+gen_do_decode(Modules, Stream) ->
+    gen_do_decode(first, Modules, Stream).
+
+gen_do_decode(_, [], _) -> ok;
+gen_do_decode(first, [{_, Records} | T], Stream) ->
+    gen_do_decode(first, Records, Stream),
+    gen_do_decode(next, T, Stream),
+    io:format(Stream, ".~n~n", []);
+gen_do_decode(next, [{_, Records} | T], Stream) ->
+    gen_do_decode(next, Records, Stream),
+    gen_do_decode(next, T, Stream);
+
+gen_do_decode(first, [{Name, Var, Fields} | T], Stream) ->
+    io:format(Stream, "do_decode(~s, Bin, Lazy) ->~n", [Name]),
+    io:format(Stream, "    {Result, Bin1, Lazy1} =~n", []),
+    io:format(Stream, "            chain([", []),
+    gen_decode_chain(first, Fields, Stream),
+    io:format(Stream, "    [", []),
+    gen_do_decode_fields(first, Fields, Stream),
+    io:format(Stream, "],~n", []),
+    io:format(Stream, "    #~s{", [Name]),
+    gen_do_decode_fields_match(first, Fields, Stream),
+    io:format(Stream, "~n      } = ~s", [Var]),
+    gen_do_decode(next, T, Stream);
+gen_do_decode(next, [{Name, Var, Fields} | T], Stream) ->
+    io:format(Stream, "~ndo_decode(~s, Bin, Lazy) ->~n", [Name]),
+    io:format(Stream, "    {Result, Bin1, Lazy1} =~n", []),
+    io:format(Stream, "            chain([", []),
+    gen_decode_chain(first, Fields, Stream),
+    io:format(Stream, "    [", []),
+    gen_do_decode_fields(first, Fields, Stream),
+    io:format(Stream, "],~n", []),
+    io:format(Stream, "    #~s{", [Name]),
+    gen_do_decode_fields_match(first, Fields, Stream),
+    io:format(Stream, "~n      } = ~s", [Var]),
+    gen_do_decode(next, T, Stream).
+
+
+gen_decode_chain(_, [], _) -> ok;
+gen_decode_chain(first, [{_, _, Type} | T], Stream) ->
+    io:format(Stream, "fun decode_~p/2", [Type]),
+    gen_decode_chain(next, T, Stream);
+gen_decode_chain(next, [{_, _, Type} | T], Stream) ->
+    io:format(Stream, ",~n                   fun decode_~p/2", [Type]),
+    gen_decode_chain(next, T, Stream).
+
+gen_do_decode_fields_match(_, [], _) -> ok;
+gen_do_decode_fields_match(first, [{Name, Var, _} | T], Stream) ->
+    io:format(Stream, "~n       ~s = ~s", [Name, Var]),
+    gen_do_decode_fields_match(next, T, Stream);
+gen_do_decode_fields_match(next, [{Name, Var, _} | T], Stream) ->
+    io:format(Stream, ",~n       ~s = ~s", [Name, Var]),
+    gen_do_decode_fields_match(next, T, Stream).
+
+gen_do_decode_fields(_, [], _) -> ok;
+gen_do_decode_fields(first, [{_, Var, Type} | T], Stream) ->
+    io:format(Stream, "~s", [gen_do_decode_type(Type, Var)]),
+    gen_do_decode_fields(next, T, Stream);
+gen_do_decode_fields(next, [{_, Var, Type} | T], Stream) ->
+    io:format(Stream, ",~n     ~s", [gen_do_decode_type(Type, Var)]),
+    gen_do_decode_fields(next, T, Stream).
+
+gen_do_decode_type(Type, Var) when is_atom(Type) ->
+    case lists:member(Type, ?BUILT_IN) of
+        true -> io_lib:format("decode_~p(~s)", [Type, Var]);
+        false -> io_lib:format("do_decode(~s)", [Var])
+    end;
+gen_do_decode_type(#vector{type = Type}, Var) ->
+    io_lib:format(
+      "decode_int(length(~s)),~n     [~s || E <- ~s]",
+      [Var, gen_do_decode_type(Type, "E"), Var]);
+gen_do_decode_type(#map{key = Key, value = Value}, Var) ->
+    io_lib:format(
+      "decode_int(length(~s)),~n     [[~s, ~s] || {Key, Value} <- ~s]",
+      [Var,
+       gen_do_decode_type(Key, "K"),
+       gen_do_decode_type(Value, "Value"),
+       Var]).
 
 hrl_file(#opts{dest_name = Name, dest_dir = Dir, include_dir = IDir}) ->
     case IDir of
