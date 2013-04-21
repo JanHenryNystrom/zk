@@ -560,8 +560,8 @@ gen_do_decode(Record, Stream) ->
     io:format(Stream, "        chain([", []),
     spaced(Fields, fun gen_decode_chain/2, ",\n               ", Stream),
     io:format(Stream, "]),~n    [", []),
-    spaced(Fields, fun gen_do_decode_field/2, ",\n     ", Stream),
-    io:format(Stream, "],~n", []),
+    spaced(lists:reverse(Fields), fun gen_do_decode_field/2, ",\n     ",Stream),
+    io:format(Stream, "] = Result,~n", []),
     io:format(Stream, "    #~s{", [Name]),
     spaced(Fields, fun gen_do_decode_field_match/2, ",", Stream),
     io:format(Stream, "~n      } = ~s,~n    {~s, Bin1, Lazy1}", [Var, Var]).
@@ -572,25 +572,25 @@ gen_decode_chain(#field{type = Type}, Stream) ->
 gen_do_decode_field_match(#field{name = Name, variable_name = Var}, Stream) ->
     io:format(Stream, "~n       ~s = ~s", [Name, Var]).
 
-gen_do_decode_field(#field{variable_name = Var, type = Type}, Stream) ->
-    io:format(Stream, "~s", [gen_do_decode_type(Type, Var)]).
+gen_do_decode_field(#field{variable_name = Var}, Stream) ->
+    io:format(Stream, "~s", [Var]).
 
-gen_do_decode_type(Type, Var) when is_atom(Type) ->
-    case lists:member(Type, ?BUILT_IN) of
-        true -> io_lib:format("decode_~p(~s)", [Type, Var]);
-        false -> io_lib:format("do_decode(~s)", [Var])
-    end;
-gen_do_decode_type(#vector{type = Type}, Var) ->
-    io_lib:format(
-      "decode_int(length(~s)),~n     [~s || E <- ~s]",
-      [Var, gen_do_decode_type(Type, "E"), Var]);
-gen_do_decode_type(#map{key = Key, value = Value}, Var) ->
-    io_lib:format(
-      "decode_int(length(~s)),~n     [[~s, ~s] || {Key, Value} <- ~s]",
-      [Var,
-       gen_do_decode_type(Key, "K"),
-       gen_do_decode_type(Value, "Value"),
-       Var]).
+%% gen_do_decode_type(Type, Var) when is_atom(Type) ->
+%%     case lists:member(Type, ?BUILT_IN) of
+%%         true -> io_lib:format("decode_~p(~s)", [Type, Var]);
+%%         false -> io_lib:format("do_decode(~s)", [Var])
+%%     end;
+%% gen_do_decode_type(#vector{type = Type}, Var) ->
+%%     io_lib:format(
+%%       "decode_int(length(~s)),~n     [~s || E <- ~s]",
+%%       [Var, gen_do_decode_type(Type, "E"), Var]);
+%% gen_do_decode_type(#map{key = Key, value = Value}, Var) ->
+%%     io_lib:format(
+%%       "decode_int(length(~s)),~n     [[~s, ~s] || {Key, Value} <- ~s]",
+%%       [Var,
+%%        gen_do_decode_type(Key, "K"),
+%%        gen_do_decode_type(Value, "Value"),
+%%        Var]).
 
 hrl_file(#opts{dest_name = Name, dest_dir = Dir, include_dir = IDir}) ->
     case IDir of
