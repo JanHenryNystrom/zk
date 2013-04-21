@@ -522,11 +522,10 @@ gen_do_encode(first, [{_, Records} | T], Stream) ->
 gen_do_encode(next, [{_, Records} | T], Stream) ->
     gen_do_encode(next, Records, Stream),
     gen_do_encode(next, T, Stream);
-
 gen_do_encode(first, [{Name, Var, Fields} | T], Stream) ->
     io:format(Stream, "do_encode(~s = #~s{}) ->~n", [Var, Name]),
     io:format(Stream, "    #~s{", [Name]),
-    gen_do_encode_fields_match(first, Fields, Stream),
+    spaced(Fields, fun gen_do_encode_fields_match/2, ",", Stream),
     io:format(Stream, "~n      } = ~s,~n", [Var]),
     io:format(Stream, "    [", []),
     gen_do_encode_fields(first, Fields, Stream),
@@ -535,20 +534,15 @@ gen_do_encode(first, [{Name, Var, Fields} | T], Stream) ->
 gen_do_encode(next, [{Name, Var, Fields} | T], Stream) ->
     io:format(Stream, ";~ndo_encode(~s = #~s{}) ->~n", [Var, Name]),
     io:format(Stream, "    #~s{", [Name]),
-    gen_do_encode_fields_match(first, Fields, Stream),
+    spaced(Fields, fun gen_do_encode_fields_match/2, ",", Stream),
     io:format(Stream, "~n      } = ~s,~n", [Var]),
     io:format(Stream, "    [", []),
     gen_do_encode_fields(first, Fields, Stream),
     io:format(Stream, "]", []),
     gen_do_encode(next, T, Stream).
 
-gen_do_encode_fields_match(_, [], _) -> ok;
-gen_do_encode_fields_match(first, [{Name, Var, _} | T], Stream) ->
-    io:format(Stream, "~n       ~s = ~s", [Name, Var]),
-    gen_do_encode_fields_match(next, T, Stream);
-gen_do_encode_fields_match(next, [{Name, Var, _} | T], Stream) ->
-    io:format(Stream, ",~n       ~s = ~s", [Name, Var]),
-    gen_do_encode_fields_match(next, T, Stream).
+gen_do_encode_fields_match({Name, Var, _}, Stream) ->
+    io:format(Stream, "~n       ~s = ~s", [Name, Var]).
 
 gen_do_encode_fields(_, [], _) -> ok;
 gen_do_encode_fields(first, [{_, Var, Type} | T], Stream) ->
