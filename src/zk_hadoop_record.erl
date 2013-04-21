@@ -528,7 +528,7 @@ gen_do_encode(first, [{Name, Var, Fields} | T], Stream) ->
     spaced(Fields, fun gen_do_encode_fields_match/2, ",", Stream),
     io:format(Stream, "~n      } = ~s,~n", [Var]),
     io:format(Stream, "    [", []),
-    gen_do_encode_fields(first, Fields, Stream),
+    spaced(Fields, fun gen_do_encode_fields/2, ",\n     ", Stream),
     io:format(Stream, "]", []),
     gen_do_encode(next, T, Stream);
 gen_do_encode(next, [{Name, Var, Fields} | T], Stream) ->
@@ -537,20 +537,15 @@ gen_do_encode(next, [{Name, Var, Fields} | T], Stream) ->
     spaced(Fields, fun gen_do_encode_fields_match/2, ",", Stream),
     io:format(Stream, "~n      } = ~s,~n", [Var]),
     io:format(Stream, "    [", []),
-    gen_do_encode_fields(first, Fields, Stream),
+    spaced(Fields, fun gen_do_encode_fields/2, ",\n     ", Stream),
     io:format(Stream, "]", []),
     gen_do_encode(next, T, Stream).
 
 gen_do_encode_fields_match({Name, Var, _}, Stream) ->
     io:format(Stream, "~n       ~s = ~s", [Name, Var]).
 
-gen_do_encode_fields(_, [], _) -> ok;
-gen_do_encode_fields(first, [{_, Var, Type} | T], Stream) ->
-    io:format(Stream, "~s", [gen_do_encode_type(Type, Var)]),
-    gen_do_encode_fields(next, T, Stream);
-gen_do_encode_fields(next, [{_, Var, Type} | T], Stream) ->
-    io:format(Stream, ",~n     ~s", [gen_do_encode_type(Type, Var)]),
-    gen_do_encode_fields(next, T, Stream).
+gen_do_encode_fields({_, Var, Type}, Stream) ->
+    io:format(Stream, "~s", [gen_do_encode_type(Type, Var)]).
 
 gen_do_encode_type(Type, Var) when is_atom(Type) ->
     case lists:member(Type, ?BUILT_IN) of
