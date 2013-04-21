@@ -163,10 +163,10 @@
 -define(DECODE_CHAIN,
         "chain([], Binary, Lazy, Acc) -> {Acc, Binary, Lazy};\n"
         "chain([{F, Type} | T], Binary, Lazy, Acc) ->\n"
-        "{H1, Binary1, Lazy1} = F(Type, Binary, Lazy),\n"
+        "    {H1, Binary1, Lazy1} = F(Type, Binary, Lazy),\n"
         "chain(T, Binary1, Lazy1, [H1 | Acc]).\n"
         "chain([F | T], Binary, Lazy, Acc) ->\n"
-        "{H1, Binary1, Lazy1} = F(Binary, Lazy),\n"
+        "    {H1, Binary1, Lazy1} = F(Binary, Lazy),\n"
         "chain(T, Binary1, Lazy1, [H1 | Acc])."
        ).
 
@@ -456,19 +456,16 @@ gen(erl, [preamble, Uses | Modules], Stream, Opts) ->
     io:format(Stream, "~s~n~n", [?ERL_PREAMBLE]),
     io:format(Stream, "%%~60c~n%% Internal functions~n%%~60c~n~n", [$=, $=]),
     io:format(Stream, "%%~60c~n%% Encoding~n%%~60c~n~n", [$-, $-]),
-    Variables = [variables(Module) || Module <- Modules],
-    io:format("~p~n", [Variables]),
-    spaced([Record || #module{records=Records} <- Modules, Record <- Records],
-           fun gen_do_encode/2,
-           ";\n",
-           Stream),
+    Records =
+        [Record || #module{records=Records} <- Modules, Record <- Records],
+    spaced(Records, fun gen_do_encode/2, ";\n", Stream),
     io:format(Stream, ".~n", []),
     [case lists:member(Type, Uses) of
          true -> io:format(Stream, "~s", [Format]);
          false -> ok
      end || {Type, Format} <- ?ERL_ENCODE_MAP],
     io:format(Stream, "~n~n%%~60c~n%% Decoding~n%%~60c~n~n", [$-, $-]),
-    gen_do_decode(Variables, Stream),
+    spaced(Records, fun gen_do_decode/2, ";\n", Stream),
     [case lists:member(Type, Uses) of
          true -> io:format(Stream, "~s", [Format]);
          false -> ok
@@ -547,70 +544,27 @@ gen_do_encode_type(#map{key = Key, value = Value}, Var) ->
 %% Decoding
 %%------------------------------------------------------------
 
-gen_do_decode([{_, Records}], Stream) ->
-    gen_do_decode(first, Records, Stream),
-    io:format(Stream, ".~n", []);
-gen_do_decode(Modules, Stream) ->
-    gen_do_decode(first, Modules, Stream).
-
-gen_do_decode(_, [], _) -> ok;
-gen_do_decode(first, [{_, Records} | T], Stream) ->
-    gen_do_decode(first, Records, Stream),
-    gen_do_decode(next, T, Stream),
-    io:format(Stream, ".~n~n", []);
-gen_do_decode(next, [{_, Records} | T], Stream) ->
-    gen_do_decode(next, Records, Stream),
-    gen_do_decode(next, T, Stream);
-
-gen_do_decode(first, [{Name, Var, Fields} | T], Stream) ->
+gen_do_decode(Record, Stream) ->
+    #record{name = Name, fields = Fields, variable_name = Var} = Record,
     io:format(Stream, "do_decode(~s, Bin, Lazy) ->~n", [Name]),
     io:format(Stream, "    {Result, Bin1, Lazy1} =~n", []),
     io:format(Stream, "            chain([", []),
-    gen_decode_chain(first, Fields, Stream),
+    spaced(Fields, fun gen_decode_chain/2, ",\n                   ", Stream),
     io:format(Stream, "    [", []),
-    gen_do_decode_fields(first, Fields, Stream),
+    spaced(Fields, fun gen_do_decode_field/2, ",\n", Stream),
     io:format(Stream, "],~n", []),
     io:format(Stream, "    #~s{", [Name]),
-    gen_do_decode_fields_match(first, Fields, Stream),
-    io:format(Stream, "~n      } = ~s", [Var]),
-    gen_do_decode(next, T, Stream);
-gen_do_decode(next, [{Name, Var, Fields} | T], Stream) ->
-    io:format(Stream, "~ndo_decode(~s, Bin, Lazy) ->~n", [Name]),
-    io:format(Stream, "    {Result, Bin1, Lazy1} =~n", []),
-    io:format(Stream, "            chain([", []),
-    gen_decode_chain(first, Fields, Stream),
-    io:format(Stream, "    [", []),
-    gen_do_decode_fields(first, Fields, Stream),
-    io:format(Stream, "],~n", []),
-    io:format(Stream, "    #~s{", [Name]),
-    gen_do_decode_fields_match(first, Fields, Stream),
-    io:format(Stream, "~n      } = ~s", [Var]),
-    gen_do_decode(next, T, Stream).
+    spaced(Fields, fun gen_do_decode_field_match/2, ",", Stream),
+    io:format(Stream, "~n      } = ~s", [Var]).
 
+gen_decode_chain(#field{type = Type}, Stream) ->
+    io:format(Stream, "fun decode_~p/2", [Type]).
 
-gen_decode_chain(_, [], _) -> ok;
-gen_decode_chain(first, [{_, _, Type} | T], Stream) ->
-    io:format(Stream, "fun decode_~p/2", [Type]),
-    gen_decode_chain(next, T, Stream);
-gen_decode_chain(next, [{_, _, Type} | T], Stream) ->
-    io:format(Stream, ",~n                   fun decode_~p/2", [Type]),
-    gen_decode_chain(next, T, Stream).
+gen_do_decode_field_match(#field{name = Name, variable_name = Var}, Stream) ->
+    io:format(Stream, "~n       ~s = ~s", [Name, Var]).
 
-gen_do_decode_fields_match(_, [], _) -> ok;
-gen_do_decode_fields_match(first, [{Name, Var, _} | T], Stream) ->
-    io:format(Stream, "~n       ~s = ~s", [Name, Var]),
-    gen_do_decode_fields_match(next, T, Stream);
-gen_do_decode_fields_match(next, [{Name, Var, _} | T], Stream) ->
-    io:format(Stream, ",~n       ~s = ~s", [Name, Var]),
-    gen_do_decode_fields_match(next, T, Stream).
-
-gen_do_decode_fields(_, [], _) -> ok;
-gen_do_decode_fields(first, [{_, Var, Type} | T], Stream) ->
-    io:format(Stream, "~s", [gen_do_decode_type(Type, Var)]),
-    gen_do_decode_fields(next, T, Stream);
-gen_do_decode_fields(next, [{_, Var, Type} | T], Stream) ->
-    io:format(Stream, ",~n     ~s", [gen_do_decode_type(Type, Var)]),
-    gen_do_decode_fields(next, T, Stream).
+gen_do_decode_field(#field{variable_name = Var, type = Type}, Stream) ->
+    io:format(Stream, "     ~s", [gen_do_decode_type(Type, Var)]).
 
 gen_do_decode_type(Type, Var) when is_atom(Type) ->
     case lists:member(Type, ?BUILT_IN) of
@@ -634,15 +588,6 @@ hrl_file(#opts{dest_name = Name, dest_dir = Dir, include_dir = IDir}) ->
         "" -> filename:join(Dir, Name ++ ".hrl");
         _ -> filename:join(IDir, Name ++ ".hrl")
     end.
-
-variables(#module{name = Name, records = Recs}) ->
-    {Name, [variables(Rec) || Rec <- Recs]};
-variables(#record{name = Name, fields = Fields}) ->
-    {Name, name_to_variable(Name), [variables(Field) || Field <- Fields]};
-variables(#field{name = Name, type = Type}) ->
-    {join([Name], []), variables(Name), Type};
-variables(Atom) when is_atom(Atom) ->
-    name_to_variable(Atom).
 
 name_to_variable(Atom) -> name_to_variable(i, atom_to_list(Atom), []).
 
