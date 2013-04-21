@@ -459,13 +459,14 @@ gen(erl, [preamble, Uses | Modules], Stream, Opts) ->
     Records =
         [Record || #module{records=Records} <- Modules, Record <- Records],
     spaced(Records, fun gen_do_encode/2, ";\n", Stream),
-    io:format(Stream, ".~n", []),
+    io:format(Stream, ".~n~n", []),
     [case lists:member(Type, Uses) of
          true -> io:format(Stream, "~s", [Format]);
          false -> ok
      end || {Type, Format} <- ?ERL_ENCODE_MAP],
     io:format(Stream, "~n~n%%~60c~n%% Decoding~n%%~60c~n~n", [$-, $-]),
     spaced(Records, fun gen_do_decode/2, ";\n", Stream),
+    io:format(Stream, ".~n~n", []),
     [case lists:member(Type, Uses) of
          true -> io:format(Stream, "~s", [Format]);
          false -> ok
@@ -548,14 +549,14 @@ gen_do_decode(Record, Stream) ->
     #record{name = Name, fields = Fields, variable_name = Var} = Record,
     io:format(Stream, "do_decode(~s, Bin, Lazy) ->~n", [Name]),
     io:format(Stream, "    {Result, Bin1, Lazy1} =~n", []),
-    io:format(Stream, "            chain([", []),
-    spaced(Fields, fun gen_decode_chain/2, ",\n                   ", Stream),
-    io:format(Stream, "    [", []),
-    spaced(Fields, fun gen_do_decode_field/2, ",\n", Stream),
+    io:format(Stream, "        chain([", []),
+    spaced(Fields, fun gen_decode_chain/2, ",\n               ", Stream),
+    io:format(Stream, "]),~n    [", []),
+    spaced(Fields, fun gen_do_decode_field/2, ",\n     ", Stream),
     io:format(Stream, "],~n", []),
     io:format(Stream, "    #~s{", [Name]),
     spaced(Fields, fun gen_do_decode_field_match/2, ",", Stream),
-    io:format(Stream, "~n      } = ~s", [Var]).
+    io:format(Stream, "~n      } = ~s,~n    {~s, Bin1, Lazy1}", [Var, Var]).
 
 gen_decode_chain(#field{type = Type}, Stream) ->
     io:format(Stream, "fun decode_~p/2", [Type]).
@@ -564,7 +565,7 @@ gen_do_decode_field_match(#field{name = Name, variable_name = Var}, Stream) ->
     io:format(Stream, "~n       ~s = ~s", [Name, Var]).
 
 gen_do_decode_field(#field{variable_name = Var, type = Type}, Stream) ->
-    io:format(Stream, "     ~s", [gen_do_decode_type(Type, Var)]).
+    io:format(Stream, "~s", [gen_do_decode_type(Type, Var)]).
 
 gen_do_decode_type(Type, Var) when is_atom(Type) ->
     case lists:member(Type, ?BUILT_IN) of
