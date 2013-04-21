@@ -408,6 +408,14 @@ shrink(_, _, _, Names) -> Names.
 remove_fuse([], Key) -> list_to_atom(join(Key, []));
 remove_fuse([H | T], [H | Key]) -> remove_fuse(T, Key).
 
+name_to_variable(Atom) -> name_to_variable(i, atom_to_list(Atom), []).
+
+name_to_variable(_, [], Acc) -> lists:reverse(Acc);
+name_to_variable(_, [$_ | T], Acc) -> name_to_variable(i, T, Acc);
+name_to_variable(X, [H | T], Acc) when ?DIGIT(H) -> name_to_variable(X, T, Acc);
+name_to_variable(i, [H | T], Acc) -> name_to_variable(n, T, [up(H) | Acc]);
+name_to_variable(n, [H | T], Acc) -> name_to_variable(n, T, [H | Acc]).
+
 %% ===================================================================
 %% Gen
 %% ===================================================================
@@ -589,14 +597,6 @@ hrl_file(#opts{dest_name = Name, dest_dir = Dir, include_dir = IDir}) ->
         "" -> filename:join(Dir, Name ++ ".hrl");
         _ -> filename:join(IDir, Name ++ ".hrl")
     end.
-
-name_to_variable(Atom) -> name_to_variable(i, atom_to_list(Atom), []).
-
-name_to_variable(_, [], Acc) -> lists:reverse(Acc);
-name_to_variable(_, [$_ | T], Acc) -> name_to_variable(i, T, Acc);
-name_to_variable(X, [H | T], Acc) when ?DIGIT(H) -> name_to_variable(X, T, Acc);
-name_to_variable(i, [H | T], Acc) -> name_to_variable(n, T, [up(H) | Acc]);
-name_to_variable(n, [H | T], Acc) -> name_to_variable(n, T, [H | Acc]).
 
 up(D) -> D - ?CASE_DIFF.
 
