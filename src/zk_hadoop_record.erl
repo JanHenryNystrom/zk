@@ -347,13 +347,13 @@ rename(Rec = #record{id = Id, fields = Fields}, Names, IdList, Module) ->
         lists:unzip([rename(Field, Names, IdList, Module) || Field <- Fields]),
     {Rec#record{name = NewName,
                 fields = Fields1,
-                variable_name = name_to_variable(NewName)},
+                variable = name_to_variable(NewName)},
      Uses};
 rename(Field = #field{name = Name, type = Type}, Names, IdList, Module) ->
     {NewType, Uses} = rename(Type, Names, IdList, Module),
     {Field#field{name = value(Name),
                  type = NewType,
-                 variable_name = name_to_variable(value(Name))},
+                 variable = name_to_variable(value(Name))},
      Uses};
 rename(Vector = #vector{type = Type}, Names, IdList, Module) ->
     {NewType, Uses} = rename(Type, Names, IdList, Module),
@@ -516,8 +516,7 @@ gen_type(Type, Stream) ->
 %% Encoding
 %%------------------------------------------------------------
 
-gen_do_encode(Record, Stream) ->
-    #record{name = Name, fields = Fields, variable_name = Var} = Record,
+gen_do_encode(#record{name = Name, fields = Fields, variable = Var}, Stream) ->
     io:format(Stream, "do_encode(~s = #~s{}) ->~n", [Var, Name]),
     io:format(Stream, "    #~s{", [Name]),
     spaced(Fields, fun gen_do_encode_fields_match/2, ",", Stream),
@@ -526,10 +525,10 @@ gen_do_encode(Record, Stream) ->
     spaced(Fields, fun gen_do_encode_fields/2, ",\n     ", Stream),
     io:format(Stream, "]", []).
 
-gen_do_encode_fields_match(#field{name = Name, variable_name = Var}, Stream) ->
+gen_do_encode_fields_match(#field{name = Name, variable = Var}, Stream) ->
     io:format(Stream, "~n       ~s = ~s", [Name, Var]).
 
-gen_do_encode_fields(#field{variable_name = Var, type = Type}, Stream) ->
+gen_do_encode_fields(#field{variable = Var, type = Type}, Stream) ->
     io:format(Stream, "~s", [gen_do_encode_type(Type, Var)]).
 
 gen_do_encode_type(Type, Var) when is_atom(Type) ->
@@ -553,8 +552,16 @@ gen_do_encode_type(#map{key = Key, value = Value}, Var) ->
 %% Decoding
 %%------------------------------------------------------------
 
-gen_do_decode(Record, Stream) ->
-    #record{name = Name, fields = Fields, variable_name = Var} = Record,
+gen_do_decode(#record{name = Name, fields = [Field]}, Stream) ->
+    #field{name = FieldName, variable = FieldVar} = Field,
+    io:format(Stream, "do_decode(~s, Bin, Lazy) ->~n", [Name]),
+    io:format(Stream, "    {[~s], Bin1, Lazy1} = chain([", [FieldVar]),
+    spaced([Field], fun gen_decode_chain/2, ",\n               ", Stream),
+    io:format(Stream, "]),~n", []),
+    io:format(Stream,
+              "    {#~s{~s = ~s}, Bin1, Lazy1}",
+              [Name, FieldName, FieldVar]);
+gen_do_decode(#record{name = Name, fields = Fields, variable = Var}, Stream) ->
     io:format(Stream, "do_decode(~s, Bin, Lazy) ->~n", [Name]),
     io:format(Stream, "    {Result, Bin1, Lazy1} =~n", []),
     io:format(Stream, "        chain([", []),
@@ -562,35 +569,25 @@ gen_do_decode(Record, Stream) ->
     io:format(Stream, "]),~n    [", []),
     spaced(lists:reverse(Fields), fun gen_do_decode_field/2, ",\n     ",Stream),
     io:format(Stream, "] = Result,~n", []),
-    io:format(Stream, "    #~s{", [Name]),
+    io:format(Stream, "    ~s =~n        #~s{", [Var, Name]),
     spaced(Fields, fun gen_do_decode_field_match/2, ",", Stream),
-    io:format(Stream, "~n      } = ~s,~n    {~s, Bin1, Lazy1}", [Var, Var]).
+    io:format(Stream, "~n          },~n    {~s, Bin1, Lazy1}", [Var]).
 
-gen_decode_chain(#field{type = Type}, Stream) ->
-    io:format(Stream, "fun decode_~p/2", [Type]).
+gen_decode_chain(#field{type = Type}, Stream) when is_atom(Type) ->
+    case lists:member(Type, ?BUILT_IN) of
+        true -> io:format(Stream, "fun decode_~p/2", [Type]);
+        false -> io:format(Stream, "{fun do_decode/3, ~s}", [Type])
+    end;
+gen_decode_chain(#field{type = #vector{type = Type}}, Stream) ->
+    io:format(Stream, "{fun do_decode_vector/3, ~s}", [Type]);
+gen_decode_chain(#field{type = #map{key = Key, value = Value}}, Stream) ->
+    io:format(Stream, "{fun do_decode_map/3, ~s}", [{Key, Value}]).
 
-gen_do_decode_field_match(#field{name = Name, variable_name = Var}, Stream) ->
-    io:format(Stream, "~n       ~s = ~s", [Name, Var]).
+gen_do_decode_field_match(#field{name = Name, variable = Var}, Stream) ->
+    io:format(Stream, "~n           ~s = ~s", [Name, Var]).
 
-gen_do_decode_field(#field{variable_name = Var}, Stream) ->
+gen_do_decode_field(#field{variable = Var}, Stream) ->
     io:format(Stream, "~s", [Var]).
-
-%% gen_do_decode_type(Type, Var) when is_atom(Type) ->
-%%     case lists:member(Type, ?BUILT_IN) of
-%%         true -> io_lib:format("decode_~p(~s)", [Type, Var]);
-%%         false -> io_lib:format("do_decode(~s)", [Var])
-%%     end;
-%% gen_do_decode_type(#vector{type = Type}, Var) ->
-%%     io_lib:format(
-%%       "decode_int(length(~s)),~n     [~s || E <- ~s]",
-%%       [Var, gen_do_decode_type(Type, "E"), Var]);
-%% gen_do_decode_type(#map{key = Key, value = Value}, Var) ->
-%%     io_lib:format(
-%%       "decode_int(length(~s)),~n     [[~s, ~s] || {Key, Value} <- ~s]",
-%%       [Var,
-%%        gen_do_decode_type(Key, "K"),
-%%        gen_do_decode_type(Value, "Value"),
-%%        Var]).
 
 hrl_file(#opts{dest_name = Name, dest_dir = Dir, include_dir = IDir}) ->
     case IDir of
