@@ -555,9 +555,9 @@ gen_do_encode_type(#map{key = Key, value = Value}, Var) ->
 gen_do_decode(#record{name = Name, fields = [Field]}, Stream) ->
     #field{name = FieldName, variable = FieldVar} = Field,
     io:format(Stream, "do_decode(~s, Bin, Lazy) ->~n", [Name]),
-    io:format(Stream, "    {[~s], Bin1, Lazy1} = chain([", [FieldVar]),
+    io:format(Stream, "    {[~s], Bin1, Lazy1} =~n        chain([", [FieldVar]),
     spaced([Field], fun gen_decode_chain/2, ",\n               ", Stream),
-    io:format(Stream, "]),~n", []),
+    io:format(Stream, "], Bin, Lazy, []),~n", []),
     io:format(Stream,
               "    {#~s{~s = ~s}, Bin1, Lazy1}",
               [Name, FieldName, FieldVar]);
@@ -566,7 +566,7 @@ gen_do_decode(#record{name = Name, fields = Fields, variable = Var}, Stream) ->
     io:format(Stream, "    {Result, Bin1, Lazy1} =~n", []),
     io:format(Stream, "        chain([", []),
     spaced(Fields, fun gen_decode_chain/2, ",\n               ", Stream),
-    io:format(Stream, "]),~n    [", []),
+    io:format(Stream, "],~n               Bin, Lazy, []),~n    [", []),
     spaced(lists:reverse(Fields), fun gen_do_decode_field/2, ",\n     ",Stream),
     io:format(Stream, "] = Result,~n", []),
     io:format(Stream, "    ~s =~n        #~s{", [Var, Name]),
