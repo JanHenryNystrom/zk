@@ -476,36 +476,32 @@ gen_type(Type, Stream) ->
 
 gen_module(hrl, #module{name = Name, records = Records}, Stream) ->
     io:format(Stream, "%%~60c~n%% Module ~s~n%%~60c~n", [$-, Name, $-]),
-    [gen_record(hrl, Record, Stream) || Record <- Records],
+    [gen_record(Record, Stream) || Record <- Records],
     io:format(Stream, "~n", []);
 gen_module(erl, Module = {Name, _}, Stream) ->
     io:format(Stream, "%%~60c~n%% Module ~s~n%%~60c~n", [$-, Name, $-]),
     io:format(Stream, "~p~n~n", [Module]).
 
-gen_record(hrl, #record{name = Name, fields = Fields}, Stream) ->
+gen_record(#record{name = Name, fields = Fields}, Stream) ->
     io:format(Stream, "-record(~s,~n~8c{~n", [Name, $ ]),
-    gen_fields(hrl, Fields, Stream),
-    io:format(Stream, "~8c}).~n", [$ ]);
-gen_record(erl, #record{}, _) ->
-    ok.
+    spaced(Fields, fun gen_field/2, ",\n", Stream),
+    io:format(Stream, "~n~8c}).~n", [$ ]).
 
-gen_fields(Type, [H], Stream) ->
-    gen_field(Type, H, Stream),
-    io:format(Stream, "~n", []);
-gen_fields(Type, [H | T], Stream) ->
-    gen_field(Type, H, Stream),
-    io:format(Stream, ",~n", []),
-    gen_fields(Type, T, Stream).
-
-gen_field(hrl, #field{name = Name, type = Type}, Stream) ->
+gen_field(#field{name = Name, type = Type}, Stream) ->
     io:format(Stream, "~10c~s :: ", [$ , join([Name], [])]),
-    gen_type(hrl, Type, Stream).
+    gen_field_type(Type, Stream).
 
-gen_type(hrl, #vector{type = Type}, Stream) ->
+gen_field_type(#vector{type = Type}, Stream) ->
     io:format(Stream, "[", []),
-    gen_type(hrl, Type, Stream),
+    gen_field_type(Type, Stream),
     io:format(Stream, "]", []);
-gen_type(hrl, Type, Stream) ->
+gen_field_type(#map{key = Key, value = Value}, Stream) ->
+    io:format(Stream, "[{", []),
+    gen_field_type(Key, Stream),
+    io:format(Stream, ", ", []),
+    gen_field_type(Value, Stream),
+    io:format(Stream, "}]", []);
+gen_field_type(Type, Stream) ->
     io:format(Stream, "~p()", [Type]).
 
 %%------------------------------------------------------------
@@ -517,13 +513,6 @@ gen_do_encode([{_, Records}], Stream) ->
     io:format(Stream, ".~n", []);
 gen_do_encode(Modules, Stream) ->
     gen_do_encode(first, Modules, Stream).
-
-spaced([], _, _) -> ok;
-spaced([H], Fun, Spacing) -> Fun(H);
-spaced([H | T], Fun, Spacing) ->
-    Fun(H),
-    io:format("~s", [Spacing]),
-    spaced_next(T, Fun, Spacing).
 
 gen_do_encode(_, [], _) -> ok;
 gen_do_encode(first, [{_, Records} | T], Stream) ->
@@ -743,6 +732,13 @@ join_u(_, [H | T], R, Acc) ->
 
 down(U) -> U + ?CASE_DIFF.
 
+spaced([], _, _, _) -> ok;
+spaced([H], Fun, _, Stream) -> Fun(H, Stream);
+spaced([H | T], Fun, Spacing, Stream) ->
+    Fun(H, Stream),
+    io:format(Stream, "~s", [Spacing]),
+    spaced(T, Fun, Spacing, Stream).
+
 %% format_error(Module, Message, Line) ->
 %%     io:format("Error Line ~p:~s~n", [Line, Module:format_error(Message)]).
 
@@ -759,3 +755,4 @@ parse_opt({license, License}, Opts) ->
     Opts#opts{license = License};
 parse_opt({copyright, Copyright}, Opts) ->
     Opts#opts{copyright = Copyright}.
+
