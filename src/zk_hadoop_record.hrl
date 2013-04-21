@@ -27,12 +27,15 @@
 
 -record(field, {type,
                 name,
-                line}).
+                line,
+                variable_name :: string()
+               }).
 
 -record(record, {name,
                  fields = [] :: [#field{}],
                  line,
-                 id = make_ref() :: reference()
+                 id = make_ref() :: reference(),
+                 variable_name :: string()
                 }).
 
 -record(module, {name = "",

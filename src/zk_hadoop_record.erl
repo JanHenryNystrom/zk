@@ -345,10 +345,16 @@ rename(Rec = #record{id = Id, fields = Fields}, Names, IdList, Module) ->
     {_, NewName} = lists:keyfind(Id, 1, IdList),
     {Fields1, Uses} =
         lists:unzip([rename(Field, Names, IdList, Module) || Field <- Fields]),
-    {Rec#record{name = NewName, fields = Fields1}, Uses};
+    {Rec#record{name = NewName,
+                fields = Fields1,
+                variable_name = name_to_variable(NewName)},
+     Uses};
 rename(Field = #field{name = Name, type = Type}, Names, IdList, Module) ->
     {NewType, Uses} = rename(Type, Names, IdList, Module),
-    {Field#field{name = value(Name), type = NewType}, Uses};
+    {Field#field{name = value(Name),
+                 type = NewType,
+                 variable_name = name_to_variable(value(Name))},
+     Uses};
 rename(Vector = #vector{type = Type}, Names, IdList, Module) ->
     {NewType, Uses} = rename(Type, Names, IdList, Module),
     {Vector#vector{type = NewType}, Uses};
@@ -451,7 +457,12 @@ gen(erl, [preamble, Uses | Modules], Stream, Opts) ->
     io:format(Stream, "%%~60c~n%% Internal functions~n%%~60c~n~n", [$=, $=]),
     io:format(Stream, "%%~60c~n%% Encoding~n%%~60c~n~n", [$-, $-]),
     Variables = [variables(Module) || Module <- Modules],
-    gen_do_encode(Variables, Stream),
+    io:format("~p~n", [Variables]),
+    spaced([Record || #module{records=Records} <- Modules, Record <- Records],
+           fun gen_do_encode/2,
+           ";\n",
+           Stream),
+    io:format(Stream, ".~n", []),
     [case lists:member(Type, Uses) of
          true -> io:format(Stream, "~s", [Format]);
          false -> ok
@@ -499,43 +510,20 @@ gen_type(Type, Stream) ->
 %% Encoding
 %%------------------------------------------------------------
 
-gen_do_encode([{_, Records}], Stream) ->
-    gen_do_encode(first, Records, Stream),
-    io:format(Stream, ".~n", []);
-gen_do_encode(Modules, Stream) ->
-    gen_do_encode(first, Modules, Stream).
-
-gen_do_encode(_, [], _) -> ok;
-gen_do_encode(first, [{_, Records} | T], Stream) ->
-    gen_do_encode(first, Records, Stream),
-    gen_do_encode(next, T, Stream),
-    io:format(Stream, ".~n~n", []);
-gen_do_encode(next, [{_, Records} | T], Stream) ->
-    gen_do_encode(next, Records, Stream),
-    gen_do_encode(next, T, Stream);
-gen_do_encode(first, [{Name, Var, Fields} | T], Stream) ->
+gen_do_encode(Record, Stream) ->
+    #record{name = Name, fields = Fields, variable_name = Var} = Record,
     io:format(Stream, "do_encode(~s = #~s{}) ->~n", [Var, Name]),
     io:format(Stream, "    #~s{", [Name]),
     spaced(Fields, fun gen_do_encode_fields_match/2, ",", Stream),
     io:format(Stream, "~n      } = ~s,~n", [Var]),
     io:format(Stream, "    [", []),
     spaced(Fields, fun gen_do_encode_fields/2, ",\n     ", Stream),
-    io:format(Stream, "]", []),
-    gen_do_encode(next, T, Stream);
-gen_do_encode(next, [{Name, Var, Fields} | T], Stream) ->
-    io:format(Stream, ";~ndo_encode(~s = #~s{}) ->~n", [Var, Name]),
-    io:format(Stream, "    #~s{", [Name]),
-    spaced(Fields, fun gen_do_encode_fields_match/2, ",", Stream),
-    io:format(Stream, "~n      } = ~s,~n", [Var]),
-    io:format(Stream, "    [", []),
-    spaced(Fields, fun gen_do_encode_fields/2, ",\n     ", Stream),
-    io:format(Stream, "]", []),
-    gen_do_encode(next, T, Stream).
+    io:format(Stream, "]", []).
 
-gen_do_encode_fields_match({Name, Var, _}, Stream) ->
+gen_do_encode_fields_match(#field{name = Name, variable_name = Var}, Stream) ->
     io:format(Stream, "~n       ~s = ~s", [Name, Var]).
 
-gen_do_encode_fields({_, Var, Type}, Stream) ->
+gen_do_encode_fields(#field{variable_name = Var, type = Type}, Stream) ->
     io:format(Stream, "~s", [gen_do_encode_type(Type, Var)]).
 
 gen_do_encode_type(Type, Var) when is_atom(Type) ->
