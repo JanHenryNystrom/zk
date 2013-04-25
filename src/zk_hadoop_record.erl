@@ -175,8 +175,8 @@
           "    end;\n"
           "decode_int(<<>>, Lazy) ->\n"
           "    {Bin1, Lazy1} = Lazy(?LAZY_WAIT),\n"
-          "    decode_int(<<Bin/binary, Bin1/binary>>, Lazy1}.\n"
-          "decode_int(_, Lazy) ->\n"
+          "    decode_int(Bin1, Lazy1);\n"
+          "decode_int(_, _) ->\n"
           "    exit(truncated_int).\n\n"},
          {long,
           "decode_long(<<I/signed, T/binary>>, Lazy) when I >= -120, "
@@ -197,8 +197,8 @@
           "    end;\n"
           "decode_long(<<>>, Lazy) ->\n"
           "    {Bin1, Lazy1} = Lazy(?LAZY_WAIT),\n"
-          "    decode_long(<<Bin/binary, Bin1/binary>>, Lazy1}.\n"
-          "decode_long(_, Lazy) ->\n"
+          "    decode_long(Bin1, Lazy1);\n"
+          "decode_long(_, _) ->\n"
           "    exit(truncated_long).\n\n"},
          {float,
           "decode_float(<<F/32/float, T/binary>>, Lazy) -> {F, T, Lazy};\n"
@@ -251,10 +251,10 @@
         "chain([], Binary, Lazy, Acc) -> {Acc, Binary, Lazy};\n"
         "chain([{F, Type} | T], Binary, Lazy, Acc) ->\n"
         "    {H1, Binary1, Lazy1} = F(Type, Binary, Lazy),\n"
-        "chain(T, Binary1, Lazy1, [H1 | Acc]).\n"
+        "    chain(T, Binary1, Lazy1, [H1 | Acc]);\n"
         "chain([F | T], Binary, Lazy, Acc) ->\n"
         "    {H1, Binary1, Lazy1} = F(Binary, Lazy),\n"
-        "chain(T, Binary1, Lazy1, [H1 | Acc])."
+        "    chain(T, Binary1, Lazy1, [H1 | Acc])."
        ).
 
 -define(ERL_POSTAMBLE,
@@ -320,7 +320,8 @@ compile(File, Opts) ->
     OptsRec =
         case parse_opts(Opts, #opts{}) of
             OptsRec0 = #opts{dest_name = undefined} ->
-                OptsRec0#opts{dest_name = filename:basename(File)};
+                Dest = filename:basename(File, filename:extension(File)),
+                OptsRec0#opts{dest_name = Dest};
             OptsRec0 ->
                 OptsRec0
         end,
@@ -438,7 +439,7 @@ rename(Rec = #record{id = Id, fields = Fields}, Names, IdList, Module) ->
      Uses};
 rename(Field = #field{name = Name, type = Type}, Names, IdList, Module) ->
     {NewType, Uses} = rename(Type, Names, IdList, Module),
-    {Field#field{name = value(Name),
+    {Field#field{name = join([value(Name)], []),
                  type = NewType,
                  variable = name_to_variable(value(Name))},
      Uses};
@@ -580,7 +581,7 @@ gen_record(#record{name = Name, fields = Fields}, Stream) ->
     io:format(Stream, "~n~8c}).~n", [$ ]).
 
 gen_field(#field{name = Name, type = Type}, Stream) ->
-    io:format(Stream, "~10c~s :: ", [$ , join([Name], [])]),
+    io:format(Stream, "~10c~s :: ", [$ , Name]),
     gen_field_type(Type, Stream).
 
 gen_field_type(#vector{type = Type}, Stream) ->
