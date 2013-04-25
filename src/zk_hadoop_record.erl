@@ -67,9 +67,11 @@
 -define(ERL_PREAMBLE,
         "%% Types\n"
         "-type opt() :: binary. %% Encode generates binaries\n"
-        "-type lazy_binary() :: fun(() -> {binary(), lazy_binary()}).\n\n"
+        "-type lazy_binary() :: lazy:data(binary()).\n\n"
         "%% Records\n"
         "-record(opts, {return_type = iolist :: iolist | binary}).\n\n"
+        "%% Defines\n"
+        "-define(LAZY_WAIT, 1000).\n\n"
         "%% ===========================================================\n"
         "%% API functions.\n"
         "%% ===========================================================\n"
@@ -139,25 +141,110 @@
         ]).
 
 -define(ERL_DECODE_MAP,
-        [{byte, "decode_byte(Byte) -> <<Byte>>.\n\n"},
+        [{byte,
+          "decode_byte(<<Byte, T/binary>>, Lazy) -> {<<Byte>>, T, Lazy};\n"
+          "decode_byte(<<>>, Lazy) ->\n"
+          "    case Lazy(?LAZY_WAIT) of\n"
+          "        {<<>>, _} -> exit(truncated_byte);\n"
+          "        {Bin, Lazy1} -> decode_byte(Bin, Lazy1)\n"
+          "    end.\n\n" },
          {boolean,
-          "decode_boolean(true) -> <<1>>;\n"
-          "decode_boolean(false) -> <<0>>.\n\n"},
+          "decode_boolean(<<0/signed, T/binary>>, Lazy) -> {false, T, Lazy};\n"
+          "decode_boolean(<<_, T/binary>>, Lazy) -> {true, T, Lazy};\n"
+          "decode_boolean(<<>>, Lazy) ->\n"
+          "    case Lazy(?LAZY_WAIT) of\n"
+          "        {<<>>, _} -> exit(truncated_boolean);\n"
+          "        {Bin, Lazy1} -> decode_boolean(Bin, Lazy1)\n"
+          "    end.\n\n"},
          {int,
-          "decode_int(Integer) when Integer >= -120, Integer < 128 ->"
-          "<<Integer/signed>>;\n"
-          "decode_int(I) -> I.\n\n"},
+          "decode_int(<<I/signed, T/binary>>, Lazy) when I >= -120, "
+          "I < 128 ->\n"
+          "    {I, T, Lazy};\n"
+          "decode_int(<<S/signed, T/binary>>, Lazy)\n"
+          "  when S > -125, byte_size(T) >= -(S + 120) ->\n"
+          "    Size = -(S + 120) * 8,\n"
+          "    <<I:Size/signed, T1/binary>> = T,\n"
+          "    {I, T1, Lazy};\n"
+          "decode_int(<<S/signed, T/binary>>, Lazy) when S > -125 ->\n"
+          "    Size = -(S + 120) * 8,\n"
+          "    case Lazy(?LAZY_WAIT) of\n"
+          "        {Bin, Lazy1} when byte_size(T) + byte_size(Bin) >= Size ->\n"
+          "            decode_int(<<S, T/binary, Bin/binary>>, Lazy1);\n"
+          "        _ ->\n"
+          "            exit(truncated_int)\n"
+          "    end;\n"
+          "decode_int(<<>>, Lazy) ->\n"
+          "    {Bin1, Lazy1} = Lazy(?LAZY_WAIT),\n"
+          "    decode_int(<<Bin/binary, Bin1/binary>>, Lazy1}.\n"
+          "decode_int(_, Lazy) ->\n"
+          "    exit(truncated_int).\n\n"},
          {long,
-          "decode_long(Integer) when Integer >= -120, Integer < 128 ->"
-          " <<Integer/signed>>;\n"
-          "decode_long(I) -> I.\n\n"},
-         {float, "decode_float(Float) -> <<Float:32/float>>.\n\n"},
-         {double, "decode_double(Float) -> <<Float:64/float>>.\n\n"},
+          "decode_long(<<I/signed, T/binary>>, Lazy) when I >= -120, "
+          "I < 128 ->\n"
+          "    {I, T, Lazy};\n"
+          "decode_long(<<S/signed, T/binary>>, Lazy)\n"
+          "  when S > -129, byte_size(T) >= -(S + 120) ->\n"
+          "    Size = -(S + 120) * 8,\n"
+          "    <<I:Size/signed, T1/binary>> = T,\n"
+          "    {I, T1, Lazy};\n"
+          "decode_long(<<S/signed, T/binary>>, Lazy) ->\n"
+          "    Size = -(S + 120) * 8,\n"
+          "    case Lazy(?LAZY_WAIT) of\n"
+          "        {Bin, Lazy1} when byte_size(T) + byte_size(Bin) >= Size ->\n"
+          "            decode_long(<<S, T/binary, Bin/binary>>, Lazy1);\n"
+          "        _ ->\n"
+          "            exit(truncated_long)\n"
+          "    end;\n"
+          "decode_long(<<>>, Lazy) ->\n"
+          "    {Bin1, Lazy1} = Lazy(?LAZY_WAIT),\n"
+          "    decode_long(<<Bin/binary, Bin1/binary>>, Lazy1}.\n"
+          "decode_long(_, Lazy) ->\n"
+          "    exit(truncated_long).\n\n"},
+         {float,
+          "decode_float(<<F/32/float, T/binary>>, Lazy) -> {F, T, Lazy};\n"
+          "decode_float(Bin, Lazy) ->\n"
+          "    case Lazy(?LAZY_WAIT) of\n"
+          "        {Bin1, Lazy1} when byte_size(Bin) + byte_size(Bin1) "
+          ">= 8 ->\n"
+          "            decode_float(<<Bin/binary, Bin1/binary>>, Lazy1);\n"
+          "        _ ->\n"
+          "            exit(truncated_float)\n"
+          "    end.\n\n"},
+         {double,
+          "decode_float(<<F/64/float, T/binary>>, Lazy) -> {F, T, Lazy};\n"
+          "decode_float(Bin, Lazy) ->\n"
+          "    case Lazy(?LAZY_WAIT) of\n"
+          "        {Bin1, Lazy1} when byte_size(Bin) + byte_size(Bin1) "
+          ">= 8 ->\n"
+          "            decode_float(<<Bin/binary, Bin1/binary>>, Lazy1);\n"
+          "        _ ->\n"
+          "            exit(truncated_duoble)\n"
+          "    end.\n\n"},
          {ustring,
-          "decode_ustring(String) ->"
-          " [decode_int(byte_size(String)), String].\n\n"},
+          "decode_ustring(Bin, Lazy) ->\n"
+          "    {Size, Bin1, Lazy1}  = decode_int(Bin, Lazy),\n"
+          "    decode_ustring(Size, Bin1, Lazy1, <<>>).\n\n"
+          "decode_ustring(0, Bin, Lazy, Acc) -> {Acc, Bin, Lazy};\n"
+          "decode_ustring(N, <<H, T/binary>>, Lazy, Acc) ->\n"
+          "    decode_ustring(N - 1, T, Lazy, <<Acc/binary, H>>);\n"
+          "decode_ustring(N, <<>>, Lazy, Acc) ->\n"
+          "    case Lazy(?LAZY_WAIT) of\n"
+          "        {<<>>, _} -> exit(truncated_ustring);\n"
+          "        {Bin, Lazy1} -> decode_ustring(N, Bin, Lazy1, Acc)\n"
+          "    end.\n\n"},
          {buffer,
-          "decode_buffer(Buffer) -> [decode_int(byte_size(Buffer)), Buffer]."}
+          "decode_buffer(Bin, Lazy) ->\n"
+          "    {Size, Bin1, Lazy1}  = decode_int(Bin, Lazy),\n"
+          "    decode_buffer(Size, Bin1, Lazy1, <<>>).\n"
+          "\n"
+          "decode_buffer(0, Bin, Lazy, Acc) -> {Acc, Bin, Lazy};\n"
+          "decode_buffer(N, <<H, T/binary>>, Lazy, Acc) ->\n"
+          "    decode_buffer(N - 1, T, Lazy, <<Acc/binary, H>>);\n"
+          "decode_buffer(N, <<>>, Lazy, Acc) ->\n"
+          "    case Lazy(?LAZY_WAIT) of\n"
+          "        {<<>>, _} -> exit(truncated_ustring);\n"
+          "        {Bin, Lazy1} -> decode_buffer(N, Bin, Lazy1, Acc)\n"
+          "    end.\n\n"}
         ]).
 
 -define(DECODE_CHAIN,
@@ -479,7 +566,7 @@ gen(erl, [preamble, Uses | Modules], Stream, Opts) ->
          true -> io:format(Stream, "~s", [Format]);
          false -> ok
      end || {Type, Format} <- ?ERL_DECODE_MAP],
-    io:format(Stream, "~n~n~s~n~n", [?DECODE_CHAIN]),
+    io:format(Stream, "~s~n~n", [?DECODE_CHAIN]),
     io:format(Stream, "~s~n", [?ERL_POSTAMBLE]).
 
 gen_module(#module{name = Name, records = Records}, Stream) ->
