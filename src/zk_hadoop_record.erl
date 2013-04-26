@@ -118,6 +118,17 @@
         "decode(Type, Binary, Lazy) -> do_decode(Type, Binary, Lazy)."
        ).
 
+-define(BASE_TYPES, [byte, boolean, int, long, float, double, ustring, buffer]).
+
+-define(ERL_ENCODE_POSTAMBLE,
+        "do_encode(Map = [{_, _} | _]) ->\n"
+        "    encode_int(length(Map)),\n"
+        "    [begin do_encode(Key),  do_encode(Value) end ||"
+        " {Key, Value} <- Map];\n"
+        "do_encode(List) when is_list(List) ->\n"
+        "    encode_int(length(List)),\n"
+        "    [do_encode(Elt) || Elt <- List].").
+
 -define(ERL_ENCODE_MAP,
         [{byte, "encode_byte(Byte) -> <<Byte>>.\n\n"},
          {boolean,
@@ -139,6 +150,15 @@
          {buffer,
           "encode_buffer(Buffer) -> [encode_int(byte_size(Buffer)), Buffer]."}
         ]).
+
+-define(ERL_DECODE_POSTAMBLE,
+        "do_decode({Key, Value}, Bin, Lazy) ->\n"
+        "    {Size, Bin1, Lazy1} = decode_int(Bin, Lazy),\n"
+        "    do_decode_map(Size, Key, Value, Bin1, Lazy1);\n"
+        "do_decode(Type, Bin, Lazy) when is_list(Type) ->\n"
+        "    {Size, Bin1, Lazy1} = decode_int(Bin, Lazy),\n"
+        "    do_decode_vector(Size, Type, Bin1, Lazy1).").
+
 
 -define(ERL_DECODE_MAP,
         [{byte,
@@ -555,14 +575,33 @@ gen(erl, [preamble, Uses | Modules], Stream, Opts) ->
     Records =
         [Record || #module{records=Records} <- Modules, Record <- Records],
     spaced(Records, fun gen_do_encode/2, ";\n", Stream),
-    io:format(Stream, ".~n~n", []),
+    io:format(Stream, ";~n", []),
+    [case lists:member(Type, Uses) of
+         true ->
+             io:format(Stream, "do_encode({~p, ~s}) ->~n    encode_~p(~s);~n",
+                       [Type,
+                        name_to_variable(Type),
+                        Type,
+                        name_to_variable(Type)]);
+         false -> ok
+     end || Type <- ?BASE_TYPES],
+    io:format(Stream, "~s~n~n", [?ERL_ENCODE_POSTAMBLE]),
     [case lists:member(Type, Uses) of
          true -> io:format(Stream, "~s", [Format]);
          false -> ok
      end || {Type, Format} <- ?ERL_ENCODE_MAP],
     io:format(Stream, "~n~n%%~60c~n%% Decoding~n%%~60c~n~n", [$-, $-]),
     spaced(Records, fun gen_do_decode/2, ";\n", Stream),
-    io:format(Stream, ".~n~n", []),
+    io:format(Stream, ";~n", []),
+    [case lists:member(Type, Uses) of
+         true ->
+             io:format(Stream,
+                       "do_decode(~p, Bin, Lazy) ->~n"
+                       "    decode_~p(Bin, Lazy);~n",
+                       [Type, Type]);
+         false -> ok
+     end || Type <- ?BASE_TYPES],
+    io:format(Stream, "~s~n~n", [?ERL_DECODE_POSTAMBLE]),
     [case lists:member(Type, Uses) of
          true -> io:format(Stream, "~s", [Format]);
          false -> ok
