@@ -788,5 +788,3 @@ parse_opt({license, License}, Opts) -> Opts#opts{license = License};
 parse_opt({copyright, Copyright}, Opts) -> Opts#opts{copyright = Copyright};
 parse_opt({include_paths, Paths}, Opts = #opts{include_paths = Paths1}) ->
     Opts#opts{include_paths = Paths1 ++ Paths}.
-
-
