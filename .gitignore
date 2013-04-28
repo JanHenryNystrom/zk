@@ -5,5 +5,5 @@ ebin
 *.beam
 *.plt
 rebar
-src/zk_hadoop_record_parse.erl
-src/zk_hadoop_record_scan.erl
+src/zookeeper.erl
+src/zookeeper.hrl

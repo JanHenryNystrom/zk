@@ -25,8 +25,8 @@ rebar:
 	(cd deps/rebar && ./bootstrap)
 	cp deps/rebar/rebar .
 
-hadoop_record: hadoop_record/zookeeper.jute
-	erl -run hadoop_record compile "hadoop_record/zookeeper" "{dest_dir, src}"
+hadoop: hadoop_record/zookeeper.jute
+	erl -pa deps/hadoop_record/ebin -run hadoop_record cmd "hadoop_record/zookeeper" "[{dest_dir, \"src\"}]" -run init stop -noshell
 
 compile: rebar
 	@$(REBAR) -j compile
@@ -48,7 +48,7 @@ doc: rebar
 clean: rebar
 	@$(REBAR) -j clean
 
-hadoop_record_clean:
+hadoop_clean:
 	rm -fr src/zookeeper.[eh]rl
 
 dist-clean: clean
