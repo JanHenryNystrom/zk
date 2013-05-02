@@ -26,7 +26,7 @@
 -copyright('Jan Henry Nystrom <JanHenryNystrom@gmail.com>').
 
 %% Library functions
--export([]).
+-export([connect/1]).
 
 %% Includes
 -include_lib("zk/src/zookeeper.hrl").
@@ -52,6 +52,29 @@
 -define(CHILD_EVENT, 4).
 -define(SESSION_EVENT, -1).
 -define(NOTWATCHING_EVENT, -2).
+
+
+%% zookeeper op type constants
+-define(ZOO_NOTIFY_OP, 0).
+-define(ZOO_CREATE_OP, 1).
+-define(ZOO_DELETE_OP, 2).
+-define(ZOO_EXISTS_OP, 3).
+-define(ZOO_GETDATA_OP, 4).
+-define(ZOO_SETDATA_OP, 5).
+-define(ZOO_GETACL_OP, 6).
+-define(ZOO_SETACL_OP, 7).
+-define(ZOO_GETCHILDREN_OP, 8).
+-define(ZOO_SYNC_OP, 9).
+-define(ZOO_PING_OP, 11).
+-define(ZOO_GETCHILDREN2_OP, 12).
+-define(ZOO_CHECK_OP, 13).
+-define(ZOO_MULTI_OP, 14).
+-define(ZOO_CREATE2_OP, 15).
+-define(ZOO_RECONFIG_OP, 16).
+-define(ZOO_CLOSE_OP, -11).
+-define(ZOO_SETAUTH_OP, 100).
+-define(ZOO_SETWATCHES_OP, 101).
+
 
 %% the size of connect request
 -define(HANDSHAKE_REQ_SIZE, 44).
@@ -93,15 +116,20 @@
 %% ===================================================================
 
 %%--------------------------------------------------------------------
-%% Function: 
+%% Function: connect(Timeout) -> ConnectionRequest
 %% @doc
 %%   
 %% @end
 %%--------------------------------------------------------------------
-
+-spec connect(pos_integer()) -> #proto_connect_request{}.
 %%--------------------------------------------------------------------
-prime_connection() ->
-    Req = #proto_connect_request{protocol_version = 0}.
+connect(Timeout) ->
+    #proto_connect_request{protocol_version = 0,
+                           last_zxid_seen = 0,
+                           time_out = Timeout,
+                           session_id = 0,
+                           passwd = <<0:128>>
+                          }.
 
 %% ===================================================================
 %% Internal functions.
