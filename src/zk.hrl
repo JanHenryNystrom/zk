@@ -15,31 +15,4 @@
 %% limitations under the License.
 %%==============================================================================
 
-{deps_dir, "deps"}.
-
-{deps, [
-        {hadoop_record, ".*",
-         {git,
-          "https://github.com/JanHenryNystrom/hadoop_record.git",
-          "master"}},
-        {jhn, ".*",
-         {git, "https://github.com/JanHenryNystrom/jhn.git", "master"}}
-       ]}.
-
-%{erl_opts, [debug_info, fail_on_warning]}.
-{xref_checks, [undefined_function_calls]}.
-
-%% == EUnit ==
-
-%% Options for eunit:test()
-{eunit_opts, [verbose]}.
-
-%% Whether to enable coverage reporting.
-{cover_enabled, true}.
-
-%% Whether to print coverage report to console.
-{cover_print_enabled, true}.
-
-{pre_hooks, [{compile, "make hadoop"}]}.
-{post_hooks, [{clean, "make hadoop_clean"}]}.
-
+-record(pool_spec, {name, timeout, size, host, port}).
