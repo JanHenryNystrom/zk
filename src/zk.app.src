@@ -35,6 +35,8 @@
                   kernel,
                   stdlib
                  ]},
-  {env, [{pools, [{pool_spec, testing, 6000, 3, "127.0.0.1", 2181}]}]},
+  {env, [{pools, [{pool_spec, testing, 6000, 3, [{"127.0.0.1", 2181}]}]},
+         {max_queue_len, 10000}
+        ]},
   {mod, [zk_app, no_arg]}
  ]}.

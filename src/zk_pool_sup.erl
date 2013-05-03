@@ -73,8 +73,8 @@ init(Spec) ->
 %% ===================================================================
 
 child(master, Spec) ->
-    {master, {zk_pool_master, start_link, [Spec]},
-     permanent, 5000, ?MASTER_SHUTDOWN, [zk_pool_master]};
+    {master, {zk_pool_master, start, [Spec]},
+     permanent, ?MASTER_SHUTDOWN, worker, [zk_pool_master]};
 child(supervisor, Spec) ->
     {sup, {zk_members_sup, start_link, [Spec]},
      permanent, infinity, supervisor, [zk_members_sup]}.
