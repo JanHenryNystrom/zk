@@ -45,10 +45,6 @@
 -include_lib("zk/src/zk.hrl").
 
 %% Records
--record(req, {sync = false :: boolean(),
-              from :: undefined | jhn_server:from(),
-              payload :: _}).
-
 -record(pool, {current = [] :: [pid()],
                template = [] :: [pid()]}).
 

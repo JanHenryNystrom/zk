@@ -16,13 +16,13 @@
 
 %%%-------------------------------------------------------------------
 %%% @doc
-%%% The supervisor for one pool.
+%%% The supervisor for the members of a pool.
 %%% @end
 %%%
 %% @author Jan Henry Nystrom <JanHenryNystrom@gmail.com>
 %% @copyright (C) 2013, Jan Henry Nystrom <JanHenryNystrom@gmail.com>
 %%%-------------------------------------------------------------------
--module(zk_pool_sup).
+-module(zk_pool_members_sup).
 -copyright('Jan Henry Nystrom <JanHenryNystrom@gmail.com>').
 
 -behaviour(supervisor).
@@ -42,7 +42,7 @@
                          [supervisor:child_spec()]}}.
 
 %% Defines
--define(MASTER_SHUTDOWN, 5000).
+-define(MEMBER_SHUTDOWN, 5000).
 
 %% ===================================================================
 %% Management API
@@ -65,17 +65,16 @@ start_link(Spec) -> supervisor:start_link({local, ?MODULE}, ?MODULE, Spec).
 %%--------------------------------------------------------------------
 -spec init(#pool_spec{}) -> init_return().
 %%--------------------------------------------------------------------
-init(Spec) ->
-    {ok, {{rest_for_one, 2, 3600}, [child(master, Spec), child(sup, Spec)]}}.
+init(Spec) -> {ok, {{one_for_one, 4, 3600}, children(Spec)}}.
 
 %% ===================================================================
 %% Internal functions.
 %% ===================================================================
 
-child(master, Spec) ->
-    {master, {zk_pool_master, start, [Spec]},
-     permanent, ?MASTER_SHUTDOWN, worker, [zk_pool_master]};
-child(supervisor, Spec) ->
-    {sup, {zk_pool_members_sup, start_link, [Spec]},
-     permanent, infinity, supervisor, [zk_members_sup]}.
+children(Spec = #pool_spec{size = Size}) ->
+    lists:foldr(fun(N, Acc) -> [child(N, Spec) | Acc] end, lists:seq(1, Size)).
+
+child(No, Spec) ->
+    {master, {zk_pool_member, start, [No, Spec]},
+     permanent, ?MEMBER_SHUTDOWN, worker, [zk_pool_master]}.
 

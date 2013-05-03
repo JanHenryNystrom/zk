@@ -15,4 +15,11 @@
 %% limitations under the License.
 %%==============================================================================
 
--record(pool_spec, {name, timeout, size, host, port}).
+-record(pool_spec, {name :: atom(),
+                    timeout :: timeout(),
+                    size :: pos_integer(),
+                    hosts :: [{string(), non_neg_integer()}]}).
+
+-record(req, {sync = false :: boolean(),
+              from :: undefined | jhn_server:from(),
+              payload :: _}).

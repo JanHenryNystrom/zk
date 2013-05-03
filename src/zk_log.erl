@@ -16,66 +16,42 @@
 
 %%%-------------------------------------------------------------------
 %%% @doc
-%%% The supervisor for one pool.
+%%%   Logging funcionality lib for zk.
 %%% @end
 %%%
 %% @author Jan Henry Nystrom <JanHenryNystrom@gmail.com>
 %% @copyright (C) 2013, Jan Henry Nystrom <JanHenryNystrom@gmail.com>
 %%%-------------------------------------------------------------------
--module(zk_pool_sup).
+-module(zk_log).
 -copyright('Jan Henry Nystrom <JanHenryNystrom@gmail.com>').
 
--behaviour(supervisor).
-
-%% Management API
--export([start_link/1]).
-
-%% supervisor callbacks
--export([init/1]).
-
-%% Includes
--include_lib("zk/src/zk.hrl").
+%% Library functions
+-export([info/3]).
 
 %% Types
--type init_return() :: {ok,
-                        {{supervisor:strategy(), integer(), integer()},
-                         [supervisor:child_spec()]}}.
+
+%% Records
 
 %% Defines
--define(MASTER_SHUTDOWN, 5000).
 
 %% ===================================================================
-%% Management API
+%% Library functions.
 %% ===================================================================
 
 %%--------------------------------------------------------------------
-%% Function: start_link(PoolSpec) -> {ok, Pid}
+%% Function: info(Module, Format, Arguments) -> ok.
 %% @doc
-%%   Starts the pool supervisor.
+%%   Logs info to the standard error logger.
 %% @end
 %%--------------------------------------------------------------------
--spec start_link(#pool_spec{}) -> {ok, pid()} | ignore | {error, _}.
+-spec info(atom(), string(), [_]) -> ok.
 %%--------------------------------------------------------------------
-start_link(Spec) -> supervisor:start_link({local, ?MODULE}, ?MODULE, Spec).
-
-%% ===================================================================
-%% supervisor callbacks
-%% ===================================================================
-
-%%--------------------------------------------------------------------
--spec init(#pool_spec{}) -> init_return().
-%%--------------------------------------------------------------------
-init(Spec) ->
-    {ok, {{rest_for_one, 2, 3600}, [child(master, Spec), child(sup, Spec)]}}.
+info(Module, Format, Args) ->
+    error_logger:info_msg(
+      io_lib:format("[~p]~p(~p) " ++ Format ++ "~n",
+                    [node(), Module, self() | Args])).
 
 %% ===================================================================
 %% Internal functions.
 %% ===================================================================
-
-child(master, Spec) ->
-    {master, {zk_pool_master, start, [Spec]},
-     permanent, ?MASTER_SHUTDOWN, worker, [zk_pool_master]};
-child(supervisor, Spec) ->
-    {sup, {zk_pool_members_sup, start_link, [Spec]},
-     permanent, infinity, supervisor, [zk_members_sup]}.
 
