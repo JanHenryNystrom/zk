@@ -26,7 +26,7 @@
 -copyright('Jan Henry Nystrom <JanHenryNystrom@gmail.com>').
 
 %% Library functions
--export([connect/1]).
+-export([connect/1, connect_response/1]).
 
 %% Includes
 -include_lib("zk/src/zookeeper.hrl").
@@ -130,6 +130,27 @@ connect(Timeout) ->
                            session_id = 0,
                            passwd = <<0:128>>
                           }.
+
+%%--------------------------------------------------------------------
+%% Function: connect_response(Soket) -> {Timeout, Session, Passwd} | error.
+%% @doc
+%%   
+%% @end
+%%--------------------------------------------------------------------
+-spec connect_response(inets:socket()) -> {integer(), integer(), binary()} |
+                                          error.
+%%--------------------------------------------------------------------
+connect_response(Socket) ->
+    case zookeeper:decode(proto_connect_response,
+                          <<>>,
+                          lazy:tcp_socket_to_data(Socket)) of
+        #proto_connect_response{time_out = Timeout,
+                                session_id = SessionId,
+                                passwd = Passwd} when session_id /= 0 ->
+            {Timeout, SessionId, Passwd};
+        _ ->
+            error
+    end.
 
 %% ===================================================================
 %% Internal functions.

@@ -55,8 +55,14 @@
                timeout :: timeout(),
                size :: pos_integer(),
                hosts :: [{string(), non_neg_integer()}],
-               no :: pos_integer()
+               no :: pos_integer(),
+               socket :: undefined | inets:socket(),
+               session_id = 0 :: integer(),
+               passwd  = <<0:128>> :: binary()
               }).
+
+%% Defines
+-define(SOCK_OPTS, [binary, {packet, 4}]).
 
 %% ===================================================================
 %% Management API
@@ -121,9 +127,9 @@ init({N, #pool_spec{name = Name, timeout = Timeout, hosts = Hosts}}) ->
 %%--------------------------------------------------------------------
 %% @private
 %%--------------------------------------------------------------------
--spec handle_msg(stop, atom(), #state{}) -> {ok, atom(), #state{}}.
+-spec handle_msg(connect, atom(), #state{}) -> {ok, atom(), #state{}}.
 %%--------------------------------------------------------------------
-handle_msg(stop, idle, State) ->
+handle_msg(connect, idle, State) ->
     case do_connect(State) of
         {ok, State1} -> {ok, connected, State1};
         State1 ->
@@ -136,7 +142,11 @@ handle_msg(stop, idle, State) ->
 %%--------------------------------------------------------------------
 -spec handle_event(stop, atom(), #state{}) -> {stop, normal}.
 %%--------------------------------------------------------------------
-handle_event(stop, _, _) ->
+handle_event(stop, _, #state{socket = undefined}) ->
+    jhn_fsm:reply(ok),
+    {stop, normal};
+handle_event(stop, _, #state{socket = Socket}) ->
+    gen_tcp:close(Socket),
     jhn_fsm:reply(ok),
     {stop, normal}.
 
@@ -176,8 +186,6 @@ connected(Req = #req{}, State) ->
     send(Req, State),
     {ok, connected, State}.
 
-
-
 %% ===================================================================
 %% Internal functions.
 %% ===================================================================
@@ -186,6 +194,34 @@ connect(immediate, _) -> self() ! connect;
 connect(later, #state{timeout = Timeout}) ->
     erlang:send_after(Timeout, self(), connect).
 
-do_connect(State) -> State.
+do_connect(State = #state{seq = Seq, hosts = Hosts, timeout = Timeout}) ->
+    {Host, Port} = lists:nth(Seq, Hosts),
+    case gen_tcp:connect(Host, Port, ?SOCK_OPTS, Timeout) of
+        {ok, Socket} ->
+            setup_connection(State#state{socket = Socket});
+        {error, _} ->
+            connect(later, State),
+            update_seq(State)
+    end.
 
 send(_, State) -> State.
+
+% We have do differentiate on reconnect and connect.
+
+setup_connection(State = #state{session_id = 0}) ->
+    #state{socket = Socket,
+           session_id = SessionId,
+           passwd = Passwd,
+           timeout = Timeout} = State,
+    case gen_tcp:send(Socket, zk_protocol:connect(Timeout,SessionId,Passwd)) of
+        {error, _} -> update_seq(State);
+        ok ->
+            case zk_protocol:connect_response(Socket) of
+                error -> update_seq(State);
+                {Timeout, SessionId, Passwd} ->
+                    {ok, State#state{timeout = Timeout}}
+            end
+    end.
+
+update_seq(State=#state{seq=Seq,no=No}) when Seq < No-> State#state{seq=Seq+1};
+update_seq(State) -> State#state{seq = 1}.

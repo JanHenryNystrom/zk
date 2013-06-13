@@ -128,6 +128,7 @@ sync_request(Name, Payload) ->
 -spec init(#pool_spec{}) -> {ok, #state{}}.
 %%--------------------------------------------------------------------
 init(#pool_spec{}) ->
+    process_flag(trap_exit, true),
     {ok, Max} = application:get_env(zk, max_queue_len),
     {ok, #state{max_queue_len = Max}}.
 
