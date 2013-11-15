@@ -81,7 +81,10 @@ start(Spec = #pool_spec{name = Name}) ->
 %% ------------------------------------------------------------
 -spec enter(atom()) -> ok.
 %% ------------------------------------------------------------
-enter(Name) -> jhn_server:cast(Name, {enter, self()}).
+enter(Name) ->
+    try link(whereis(Name)) catch _:_ -> ok end,
+    jhn_server:cast(Name, {enter, self()}).
+
 
 %%--------------------------------------------------------------------
 %% Function: 
@@ -91,7 +94,9 @@ enter(Name) -> jhn_server:cast(Name, {enter, self()}).
 %% ------------------------------------------------------------
 -spec leave(atom()) -> ok.
 %% ------------------------------------------------------------
-leave(Name) -> catch exit(whereis(Name), leaving), ok.
+leave(Name) ->
+    try exit(whereis(Name), leaving) catch _:_ -> ok end,
+    ok.
 
 %% ===================================================================
 %% API
@@ -138,11 +143,7 @@ init(#pool_spec{}) ->
 -spec handle_req(_, #state{}) -> {ok, #state{}}.
 %%--------------------------------------------------------------------
 handle_req({enter, Pid}, State) ->
-    NewState = case catch link(Pid) of
-                   true -> flush(add(Pid, State));
-                   _ -> State
-               end,
-    {ok, NewState};
+    {ok, flush(add(Pid, State))};
 handle_req(Req = #req{}, State) ->
     Req1 = Req#req{from = jhn_server:from()},
     NewState =
