@@ -23,3 +23,7 @@ ifeq (${BASE},)
 endif
 
 include deps/makefiles/erlang.mk
+
+hadoop: hadoop_record/zookeeper.jute
+	erl -pa deps/hadoop_record/ebin -run hadoop_record cmd "hadoop_record/zookeeper" "{dest_dir, \"src\"}" -run init stop -noshell
+
